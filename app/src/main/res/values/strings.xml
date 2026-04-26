@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ConnectApp</string>
+    <string name="main_title">Выберите тип подключения</string>
+    <string name="btn_wifi">Wi-Fi (TCP)</string>
+    <string name="btn_bluetooth">Bluetooth (SPP)</string>
+    <string name="btn_connect">Подключить</string>
+    <string name="btn_disconnect">Отключить</string>
+    <string name="btn_send">Отправить</string>
+    <string name="btn_clear">Очистить</string>
+    <string name="btn_scan">Поиск</string>
+    <string name="hint_ip">IP адрес</string>
+    <string name="hint_port">Порт</string>
+    <string name="hint_payload">Сообщение</string>
+    <string name="status_idle">Не подключено</string>
+</resources>
