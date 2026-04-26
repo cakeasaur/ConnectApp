@@ -69,8 +69,8 @@ class WifiViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        // viewModelScope already cancelled; release socket synchronously through repo.
-        kotlinx.coroutines.runBlocking { runCatching { repo.disconnect() } }
+        // viewModelScope is auto-cancelled here, which triggers readerJob cancellation.
+        // Socket cleanup happens in repo.disconnect() via finally block in coroutine.
     }
 
     companion object {

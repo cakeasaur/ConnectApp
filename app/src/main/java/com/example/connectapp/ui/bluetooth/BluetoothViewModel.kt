@@ -81,7 +81,8 @@ class BluetoothViewModel(
     override fun onCleared() {
         super.onCleared()
         repo.release()
-        kotlinx.coroutines.runBlocking { runCatching { repo.disconnect() } }
+        // viewModelScope is auto-cancelled, which cancels readerJob.
+        // Socket cleanup happens via finally block in repo coroutines.
     }
 
     companion object {
