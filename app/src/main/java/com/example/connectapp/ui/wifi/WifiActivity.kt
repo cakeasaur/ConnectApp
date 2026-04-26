@@ -97,9 +97,6 @@ class WifiActivity : AppCompatActivity() {
         binding.btnSend.isEnabled = !connectEnabled
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        // Belt-and-braces: cancel anything still running. ViewModel.onCleared handles socket close.
-        if (isFinishing) viewModel.disconnect()
-    }
+    // Socket cleanup is handled by ViewModel.onCleared → readerJob's finally block
+    // (wrapped in NonCancellable). No need to call disconnect() here.
 }

@@ -28,7 +28,6 @@ class WifiClient {
     suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
         val s = Socket()
         s.connect(InetSocketAddress(host, port), Constants.SOCKET_TIMEOUT_MS)
-        s.soTimeout = Constants.SOCKET_TIMEOUT_MS
         socket = s
         output = s.getOutputStream()
     }
@@ -57,7 +56,10 @@ class WifiClient {
 
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
         output?.apply {
-            write(payload.toByteArray(StandardCharsets.UTF_8))
+            // Append newline if missing — most devices (HC-05, ESP32, Arduino)
+            // expect line-delimited messages.
+            val msg = if (payload.endsWith("\n")) payload else "$payload\n"
+            write(msg.toByteArray(StandardCharsets.UTF_8))
             flush()
         }
     }

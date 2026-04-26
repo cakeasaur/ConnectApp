@@ -67,7 +67,10 @@ class BluetoothClient {
 
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
         output?.apply {
-            write(payload.toByteArray(StandardCharsets.UTF_8))
+            // Append newline if missing — most devices (HC-05, ESP32, Arduino)
+            // expect line-delimited messages.
+            val msg = if (payload.endsWith("\n")) payload else "$payload\n"
+            write(msg.toByteArray(StandardCharsets.UTF_8))
             flush()
         }
     }

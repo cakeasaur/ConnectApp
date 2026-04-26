@@ -65,11 +65,16 @@ class BluetoothActivity : AppCompatActivity() {
         binding.rvDevices.adapter = adapter
 
         binding.btnScan.setOnClickListener {
-            if (PermissionHelper.hasAll(this, PermissionHelper.bluetoothPermissions())) {
-                ensureBluetoothEnabled()
+            if (!PermissionHelper.hasAll(this, PermissionHelper.bluetoothPermissions())) {
+                permissionLauncher.launch(PermissionHelper.bluetoothPermissions())
+                return@setOnClickListener
+            }
+            // Only start discovery if BT is already enabled.
+            // If not — request enable; user will tap Scan again after.
+            if (viewModel.isEnabled()) {
                 viewModel.startDiscovery()
             } else {
-                permissionLauncher.launch(PermissionHelper.bluetoothPermissions())
+                ensureBluetoothEnabled()
             }
         }
         binding.btnDisconnect.setOnClickListener { viewModel.disconnect() }
@@ -163,11 +168,7 @@ class BluetoothActivity : AppCompatActivity() {
         binding.btnSend.isEnabled = busy
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (isFinishing) {
-            viewModel.stopDiscovery()
-            viewModel.disconnect()
-        }
-    }
+    // Cleanup is handled by BluetoothViewModel.onCleared → repo.release()
+    // (which stops discovery, unregisters receiver, cancels internal scope)
+    // and readerJob's finally block (wrapped in NonCancellable) closes the socket.
 }

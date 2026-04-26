@@ -2,8 +2,10 @@ package com.example.connectapp.data.repository
 
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.network.WifiClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -11,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class WifiRepository(
     private val client: WifiClient = WifiClient()
@@ -38,10 +41,16 @@ class WifiRepository(
                     if (_state.value is ConnectionState.Connected) {
                         _state.value = ConnectionState.Disconnected
                     }
+                } catch (e: CancellationException) {
+                    // Manual disconnect — propagate cancellation, no error state.
+                    throw e
                 } catch (t: Throwable) {
                     _state.value = ConnectionState.Error(t.message ?: "Read error")
                 } finally {
-                    runCatching { client.close() }
+                    // NonCancellable guarantees socket close even on cancellation.
+                    withContext(NonCancellable) {
+                        runCatching { client.close() }
+                    }
                 }
             }
         } catch (t: Throwable) {
