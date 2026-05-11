@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -29,11 +30,17 @@ class WifiRepository(
 
     suspend fun connect(host: String, port: Int, scope: CoroutineScope) {
         if (_state.value is ConnectionState.Connected) return
+        // Дожидаемся завершения предыдущего reader'а ДО открытия нового сокета —
+        // иначе старый job в finally закроет client, уже принадлежащий новой сессии.
+        readerJob?.cancelAndJoin()
+        readerJob = null
+        // Гарантируем, что прошлый сокет закрыт (на случай Error/Disconnected без disconnect()).
+        runCatching { client.close() }
+
         _state.value = ConnectionState.Connecting
         try {
             client.connect(host, port)
             _state.value = ConnectionState.Connected
-            readerJob?.cancel()
             readerJob = scope.launch {
                 try {
                     client.incoming().collect { _incoming.emit(it) }
@@ -64,9 +71,10 @@ class WifiRepository(
     }
 
     suspend fun disconnect() {
-        readerJob?.cancel()
-        readerJob = null
+        // Закрываем сокет первым — это разблокирует висящий read() в reader'е.
         client.close()
+        readerJob?.cancelAndJoin()
+        readerJob = null
         _state.value = ConnectionState.Idle
     }
 }

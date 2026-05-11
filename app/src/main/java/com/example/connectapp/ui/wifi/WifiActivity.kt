@@ -80,12 +80,14 @@ class WifiActivity : AppCompatActivity() {
             is ConnectionState.Disconnected -> {
                 setStatus("Соединение потеряно", connectEnabled = true)
                 Toast.makeText(this, "Соединение потеряно", Toast.LENGTH_SHORT).show()
-                finish()
+                // Не закрываем Activity — пользователь видит лог и может переподключиться.
             }
+            is ConnectionState.Reconnecting ->
+                setStatus("Переподключение… (попытка ${state.attempt})", connectEnabled = false)
             is ConnectionState.Error -> {
                 setStatus("Ошибка: ${state.message}", connectEnabled = true)
                 Toast.makeText(this, "Ошибка: ${state.message}", Toast.LENGTH_LONG).show()
-                finish()
+                // Не закрываем Activity — пользователь видит ошибку и может повторить попытку.
             }
         }
     }

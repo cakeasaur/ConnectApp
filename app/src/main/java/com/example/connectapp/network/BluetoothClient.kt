@@ -10,9 +10,10 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.InputStream
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 
@@ -24,6 +25,10 @@ class BluetoothClient {
 
     private var socket: BluetoothSocket? = null
     private var output: OutputStream? = null
+
+    // Serialises concurrent send() calls — without this, bytes from
+    // overlapping commands ("temp" + "status") can interleave on the wire.
+    private val sendMutex = Mutex()
 
     /**
      * Connect to a remote device by MAC address.
@@ -47,31 +52,41 @@ class BluetoothClient {
         output = s.outputStream
     }
 
+    /**
+     * Read raw bytes from the input stream and emit as UTF-8 strings.
+     *
+     * Uses raw [InputStream] (not BufferedReader/InputStreamReader) — the
+     * Reader chain occasionally inserts/drops characters at chunk boundaries,
+     * producing garbled text like "ahecelerometer" instead of "accelerometer".
+     */
     fun incoming(): Flow<String> = callbackFlow {
         val s = socket ?: throw IllegalStateException("Bluetooth socket is not connected")
-        val reader = BufferedReader(InputStreamReader(s.inputStream, StandardCharsets.UTF_8))
-        val buffer = CharArray(Constants.READ_BUFFER_SIZE)
+        val input: InputStream = s.inputStream
+        val buffer = ByteArray(Constants.READ_BUFFER_SIZE)
         try {
             while (s.isConnected) {
-                val read = reader.read(buffer)
+                val read = input.read(buffer)
                 if (read == -1) break
-                if (read > 0) trySend(String(buffer, 0, read))
+                if (read > 0) trySend(String(buffer, 0, read, StandardCharsets.UTF_8))
             }
         } catch (_: Throwable) {
             // Closed below
         } finally {
             close()
         }
-        awaitClose { runCatching { reader.close() } }
+        awaitClose { runCatching { input.close() } }
     }.flowOn(Dispatchers.IO)
 
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
-        output?.apply {
-            // Append newline if missing — most devices (HC-05, ESP32, Arduino)
-            // expect line-delimited messages.
-            val msg = if (payload.endsWith("\n")) payload else "$payload\n"
-            write(msg.toByteArray(StandardCharsets.UTF_8))
-            flush()
+        // Mutex prevents concurrent writes from interleaving at the byte level.
+        sendMutex.withLock {
+            output?.apply {
+                // Append newline if missing — most devices (HC-05, ESP32, Arduino)
+                // expect line-delimited messages.
+                val msg = if (payload.endsWith("\n")) payload else "$payload\n"
+                write(msg.toByteArray(StandardCharsets.UTF_8))
+                flush()
+            }
         }
     }
 

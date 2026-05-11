@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import androidx.core.content.ContextCompat
 import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.network.BluetoothClient
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,18 +54,22 @@ class BluetoothRepository(
     val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
 
     private var receiver: BroadcastReceiver? = null
-    private var readerJob: Job? = null
+    private var connectionJob: Job? = null
     private var discoveryTimeoutJob: Job? = null
     private val internalScope = MainScope()
+
+    // True when the user explicitly requested disconnect — suppresses auto-reconnect.
+    private var intentionalDisconnect = false
 
     fun isAvailable(): Boolean = adapter != null
     fun isEnabled(): Boolean = adapter?.isEnabled == true
 
     @SuppressLint("MissingPermission")
-    fun bondedDevices(): List<BluetoothDeviceItem> = adapter
-        ?.bondedDevices
-        ?.map { it.toItem(bonded = true) }
-        ?: emptyList()
+    fun bondedDevices(): List<BluetoothDeviceItem> = runCatching {
+        // На API 31+ без BLUETOOTH_CONNECT бросает SecurityException.
+        // Метод может быть вызван до получения разрешений — возвращаем пустой список.
+        adapter?.bondedDevices?.map { it.toItem(bonded = true) } ?: emptyList()
+    }.getOrDefault(emptyList())
 
     /** Publishes the current bonded device list without starting discovery. */
     fun refreshBonded() {
@@ -79,7 +86,6 @@ class BluetoothRepository(
         if (a.isDiscovering) a.cancelDiscovery()
         if (a.startDiscovery()) {
             _scanning.value = true
-            // Auto-stop after timeout as a safety net.
             discoveryTimeoutJob?.cancel()
             discoveryTimeoutJob = internalScope.launch {
                 delay(Constants.DISCOVERY_TIMEOUT_MS)
@@ -99,40 +105,71 @@ class BluetoothRepository(
         _scanning.value = false
     }
 
-    suspend fun connect(address: String, scope: CoroutineScope) {
+    /**
+     * Connects to [address] and keeps the connection alive with automatic
+     * reconnection on unexpected drops (up to infinite retries, every
+     * [Constants.RECONNECT_DELAY_MS] ms).
+     *
+     * Reconnection is skipped if [disconnect] or [release] was called first.
+     */
+    @SuppressLint("MissingPermission")
+    fun connect(address: String, scope: CoroutineScope) {
         val a = adapter ?: run {
             _state.value = ConnectionState.Error("Bluetooth not available")
             return
         }
-        if (_state.value is ConnectionState.Connected) return
-
+        intentionalDisconnect = false
         stopDiscovery()
-        _state.value = ConnectionState.Connecting
-        try {
-            client.connect(a, address)
-            _state.value = ConnectionState.Connected
-            readerJob?.cancel()
-            readerJob = scope.launch {
-                try {
-                    client.incoming().collect { _incoming.emit(it) }
-                    if (_state.value is ConnectionState.Connected) {
-                        _state.value = ConnectionState.Disconnected
+
+        connectionJob?.cancel()
+        connectionJob = scope.launch {
+            var attempt = 0
+            var wasConnected = false
+            try {
+                while (isActive && !intentionalDisconnect) {
+                    // On retry: wait before attempting reconnection.
+                    if (attempt > 0 && wasConnected) {
+                        _state.value = ConnectionState.Reconnecting(attempt)
+                        delay(Constants.RECONNECT_DELAY_MS)
                     }
-                } catch (e: CancellationException) {
-                    // Manual disconnect — propagate cancellation, no error state.
-                    throw e
-                } catch (t: Throwable) {
-                    _state.value = ConnectionState.Error(t.message ?: "Read error")
-                } finally {
-                    // NonCancellable guarantees socket close even on cancellation.
-                    withContext(NonCancellable) {
-                        runCatching { client.close() }
+                    if (!isActive || intentionalDisconnect) break
+
+                    _state.value = ConnectionState.Connecting
+                    try {
+                        client.connect(a, address)
+                        _state.value = ConnectionState.Connected
+                        wasConnected = true
+                        attempt = 0 // reset counter on successful connect
+
+                        // Blocks until the remote closes or an I/O error occurs.
+                        client.incoming().collect { _incoming.emit(it) }
+
+                    } catch (e: CancellationException) {
+                        // Propagate so the outer try-catch can clean up.
+                        throw e
+                    } catch (t: Throwable) {
+                        if (!wasConnected) {
+                            // First connection attempt failed — show error, no retry.
+                            _state.value = ConnectionState.Error(t.message ?: "Connect failed")
+                            return@launch
+                        }
+                        // Was connected before — retry after delay.
+                    } finally {
+                        // Always close the socket, even on cancellation.
+                        withContext(NonCancellable) {
+                            runCatching { client.close() }
+                        }
                     }
+
+                    if (!intentionalDisconnect) attempt++
+                }
+            } catch (e: CancellationException) {
+                // External cancellation (manual disconnect or viewModelScope cleared).
+            } finally {
+                withContext(NonCancellable) {
+                    if (intentionalDisconnect) _state.value = ConnectionState.Idle
                 }
             }
-        } catch (t: Throwable) {
-            _state.value = ConnectionState.Error(t.message ?: "Connect failed")
-            runCatching { client.close() }
         }
     }
 
@@ -141,13 +178,19 @@ class BluetoothRepository(
     }
 
     suspend fun disconnect() {
-        readerJob?.cancel()
-        readerJob = null
-        client.close()
+        intentionalDisconnect = true
+        // Закрываем сокет ДО ожидания job — иначе блокирующий read() в incoming()
+        // будет висеть до таймаута и cancel() не отработает мгновенно.
+        runCatching { client.close() }
+        connectionJob?.cancelAndJoin()
+        connectionJob = null
         _state.value = ConnectionState.Idle
     }
 
     fun release() {
+        intentionalDisconnect = true
+        connectionJob?.cancel()
+        connectionJob = null
         stopDiscovery()
         internalScope.cancel()
     }
@@ -187,7 +230,14 @@ class BluetoothRepository(
             addAction(BluetoothDevice.ACTION_FOUND)
             addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
         }
-        appContext.registerReceiver(r, filter)
+        // Android 13+ (API 33) требует явного флага экспорта при регистрации receiver.
+        // BT broadcasts — системные (protected), используем RECEIVER_NOT_EXPORTED.
+        ContextCompat.registerReceiver(
+            appContext,
+            r,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         receiver = r
     }
 

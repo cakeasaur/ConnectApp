@@ -30,3 +30,6 @@ Thumbs.db
 # Keystore
 *.keystore
 *.jks
+
+# Claude Code
+.claude/

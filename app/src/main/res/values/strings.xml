@@ -13,4 +13,13 @@
     <string name="hint_port">Порт</string>
     <string name="hint_payload">Сообщение</string>
     <string name="status_idle">Не подключено</string>
+    <string name="cmd_help">help</string>
+    <string name="cmd_status">status</string>
+    <string name="cmd_temp">temp</string>
+    <string name="cmd_accel">accel</string>
+    <string name="cmd_time">time</string>
+    <string name="cmd_version">version</string>
+    <string name="cmd_relay">relay</string>
+    <string name="cmd_monitor">monitor</string>
+    <string name="btn_graphs">📊 Графики</string>
 </resources>

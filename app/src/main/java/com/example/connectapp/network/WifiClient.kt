@@ -6,9 +6,10 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -24,6 +25,10 @@ class WifiClient {
     private var socket: Socket? = null
     private var output: OutputStream? = null
 
+    // Serialises concurrent send() calls — without this, bytes from
+    // overlapping commands can interleave on the wire.
+    private val sendMutex = Mutex()
+
     /** Connect to host:port. Throws on failure. */
     suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
         val s = Socket()
@@ -34,33 +39,38 @@ class WifiClient {
 
     /**
      * Continuous read stream. Emits decoded UTF-8 chunks.
-     * Cold flow — closes the socket when collection is cancelled.
+     *
+     * Uses raw [InputStream] (not BufferedReader/InputStreamReader) — the
+     * Reader chain can produce garbled text at chunk boundaries.
      */
     fun incoming(): Flow<String> = callbackFlow {
         val s = socket ?: throw IllegalStateException("Socket is not connected")
-        val reader = BufferedReader(InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))
-        val buffer = CharArray(Constants.READ_BUFFER_SIZE)
+        val input: InputStream = s.getInputStream()
+        val buffer = ByteArray(Constants.READ_BUFFER_SIZE)
         try {
             while (!s.isClosed) {
-                val read = reader.read(buffer)
+                val read = input.read(buffer)
                 if (read == -1) break
-                if (read > 0) trySend(String(buffer, 0, read))
+                if (read > 0) trySend(String(buffer, 0, read, StandardCharsets.UTF_8))
             }
         } catch (_: Throwable) {
             // Channel close path below propagates
         } finally {
             close()
         }
-        awaitClose { runCatching { reader.close() } }
+        awaitClose { runCatching { input.close() } }
     }.flowOn(Dispatchers.IO)
 
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
-        output?.apply {
-            // Append newline if missing — most devices (HC-05, ESP32, Arduino)
-            // expect line-delimited messages.
-            val msg = if (payload.endsWith("\n")) payload else "$payload\n"
-            write(msg.toByteArray(StandardCharsets.UTF_8))
-            flush()
+        // Mutex prevents concurrent writes from interleaving at the byte level.
+        sendMutex.withLock {
+            output?.apply {
+                // Append newline if missing — most devices (HC-05, ESP32, Arduino)
+                // expect line-delimited messages.
+                val msg = if (payload.endsWith("\n")) payload else "$payload\n"
+                write(msg.toByteArray(StandardCharsets.UTF_8))
+                flush()
+            }
         }
     }
 
