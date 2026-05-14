@@ -42,9 +42,11 @@ object DataParser {
         """^\d+;(-?[\d]+\.[\d]+);[^;]*;(-?[\d]+),(-?[\d]+),(-?[\d]+);"""
     )
 
-    // Generic bare format: "28.50,254,0,59" (no labels, 4 values, temp must have decimal)
+    // Generic bare format: "28.50,254,0,59" (no labels, 4 values, temp must have decimal).
+    // Префикс — что угодно КРОМЕ букв, цифр и минуса. Иначе greedy `[^a-zA-Z]*`
+    // сжирает первую цифру температуры (баг: «28.50» парсилось как «8.50»).
     private val bareMonitorRegex = Regex(
-        """^[^a-zA-Z]*(-?[\d]+\.[\d]+)[,\s;]+(-?[\d]+(?:\.[\d]+)?)[,\s;]+(-?[\d]+(?:\.[\d]+)?)[,\s;]+(-?[\d]+(?:\.[\d]+)?)\s*$"""
+        """^[^a-zA-Z\d\-]*(-?[\d]+\.[\d]+)[,\s;]+(-?[\d]+(?:\.[\d]+)?)[,\s;]+(-?[\d]+(?:\.[\d]+)?)[,\s;]+(-?[\d]+(?:\.[\d]+)?)\s*$"""
     )
 
     fun parse(line: String): SensorData? {
