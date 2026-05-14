@@ -19,9 +19,6 @@ object Constants {
     /** Delay before auto-reconnect attempt, milliseconds. */
     const val RECONNECT_DELAY_MS = 3_000L
 
-    /** Maximum number of data points kept in graph history. */
-    const val GRAPH_MAX_POINTS = 60
-
     /** Maximum characters kept in the log. Oldest lines are dropped beyond this. */
     const val MAX_LOG_CHARS = 30_000
 

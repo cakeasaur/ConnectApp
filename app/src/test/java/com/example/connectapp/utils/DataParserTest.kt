@@ -11,55 +11,71 @@ class DataParserTest {
     fun `verbose temperature line is parsed`() {
         val r = DataParser.parse("Temperature on I2C1: 28.5 C")
         assertNotNull(r)
-        assertEquals(28.5f, r!!.temperature)
+        assertEquals(28.5f, r!!.temperature1)
     }
 
     @Test
     fun `compact T-colon format is parsed`() {
         val r = DataParser.parse("T:23.50")
-        assertEquals(23.5f, r?.temperature)
+        assertEquals(23.5f, r?.temperature1)
     }
 
     @Test
-    fun `labeled X Y Z are parsed`() {
+    fun `labeled X Y Z are parsed into accel1`() {
         val r = DataParser.parse("X: 254 Y: 0 Z: 59")
-        assertEquals(254f, r?.accelX)
-        assertEquals(0f, r?.accelY)
-        assertEquals(59f, r?.accelZ)
+        assertEquals(254f, r?.accel1X)
+        assertEquals(0f, r?.accel1Y)
+        assertEquals(59f, r?.accel1Z)
     }
 
     @Test
     fun `axis labels with AX prefix work`() {
         val r = DataParser.parse("AX: 12 AY: 34 AZ: -5")
-        assertEquals(12f, r?.accelX)
-        assertEquals(34f, r?.accelY)
-        assertEquals(-5f, r?.accelZ)
+        assertEquals(12f, r?.accel1X)
+        assertEquals(34f, r?.accel1Y)
+        assertEquals(-5f, r?.accel1Z)
     }
 
     @Test
-    fun `firmware monitor CSV line picks first sensor pair`() {
-        val r = DataParser.parse("567;29.5;29.5;0,0,0;0,0,1;0.00;0.01;")
+    fun `firmware monitor CSV picks both sensors`() {
+        val r = DataParser.parse("567;29.5;30.7;0,0,0;1,2,3;0.00;0.01;")
         assertNotNull(r)
-        assertEquals(29.5f, r!!.temperature)
-        assertEquals(0f, r.accelX)
-        assertEquals(0f, r.accelY)
-        assertEquals(0f, r.accelZ)
+        assertEquals(29.5f, r!!.temperature1)
+        assertEquals(30.7f, r.temperature2)
+        assertEquals(0f, r.accel1X)
+        assertEquals(0f, r.accel1Y)
+        assertEquals(0f, r.accel1Z)
+        assertEquals(1f, r.accel2X)
+        assertEquals(2f, r.accel2Y)
+        assertEquals(3f, r.accel2Z)
     }
 
     @Test
-    fun `bare format temp X Y Z parses`() {
+    fun `bare 4 values parses as T1 plus accel1`() {
         val r = DataParser.parse("28.50 254 0 59")
-        assertEquals(28.5f, r?.temperature)
-        assertEquals(254f, r?.accelX)
-        assertEquals(0f, r?.accelY)
-        assertEquals(59f, r?.accelZ)
+        assertEquals(28.5f, r?.temperature1)
+        assertEquals(254f, r?.accel1X)
+        assertEquals(0f, r?.accel1Y)
+        assertEquals(59f, r?.accel1Z)
+        assertNull(r?.temperature2)
+    }
+
+    @Test
+    fun `bare 8 values parses both sensors`() {
+        val r = DataParser.parse("28.5 29.1 0 0 0 1 2 3")
+        assertEquals(28.5f, r?.temperature1)
+        assertEquals(29.1f, r?.temperature2)
+        assertEquals(0f, r?.accel1X)
+        assertEquals(0f, r?.accel1Y)
+        assertEquals(0f, r?.accel1Z)
+        assertEquals(1f, r?.accel2X)
+        assertEquals(2f, r?.accel2Y)
+        assertEquals(3f, r?.accel2Z)
     }
 
     @Test
     fun `calibration line returns null`() {
-        // Калибровочные строки не должны давать ложно-нулевую температуру.
-        val r = DataParser.parse("Calibration - Temp: 0.0 to 0.0 C")
-        assertNull(r)
+        assertNull(DataParser.parse("Calibration - Temp: 0.0 to 0.0 C"))
     }
 
     @Test
@@ -72,14 +88,28 @@ class DataParserTest {
     @Test
     fun `negative temperature is parsed`() {
         val r = DataParser.parse("Temp: -12.5 C")
-        assertEquals(-12.5f, r?.temperature)
+        assertEquals(-12.5f, r?.temperature1)
     }
 
     @Test
     fun `i2c integer suffix is not picked as temperature`() {
-        // "I2C1: 28.5" — раньше regex без обязательной точки мог ловить '1' из I2C1.
-        // Сейчас обязательна точка ⇒ температура = 28.5, не 1.
         val r = DataParser.parse("Temperature on I2C1: 28.5 C")
-        assertEquals(28.5f, r?.temperature)
+        assertEquals(28.5f, r?.temperature1)
+    }
+
+    @Test
+    fun `bare format does not lose first digit`() {
+        // Регрессия — раньше greedy '^[^a-zA-Z]*' сжирал '2', и температура была 8.50.
+        val r = DataParser.parse("28.50 254 0 59")
+        assertEquals(28.5f, r?.temperature1)
+    }
+
+    @Test
+    fun `firmware CSV with trailing fields still parses`() {
+        // На реальной плате после 'ax2,ay2,az2;' могут быть CRC/timestamp/прочее.
+        val r = DataParser.parse("100;25.0;26.0;1,2,3;4,5,6;0.00;0.01;0xAB;")
+        assertEquals(25.0f, r?.temperature1)
+        assertEquals(26.0f, r?.temperature2)
+        assertEquals(4f, r?.accel2X)
     }
 }
