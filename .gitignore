@@ -11,6 +11,7 @@ app/build/
 
 # Local
 local.properties
+build.log
 
 # OS
 .DS_Store
