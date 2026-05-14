@@ -10,10 +10,14 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.connectapp.data.settings.AppSettings
+import com.example.connectapp.data.settings.SettingsRepository
 
 private val LightColors = lightColorScheme(
     primary = Primary,
@@ -63,4 +67,18 @@ fun ConnectAppTheme(
         typography = AppTypography,
         content = content
     )
+}
+
+/**
+ * Версия темы, которая САМА подписывается на DataStore-настройки приложения.
+ * Удобно для Activity'ей, у которых нет своего ViewModel — MainActivity / WifiActivity:
+ * вместо того чтобы каждая получала SettingsRepository, оборачиваем content
+ * этой композаблой и любой переход «Светлая ↔ Тёмная» применяется ко всем экранам.
+ */
+@Composable
+fun AppThemeWithSettings(content: @Composable () -> Unit) {
+    val ctx = LocalContext.current
+    val repo = remember { SettingsRepository(ctx.applicationContext) }
+    val settings by repo.flow.collectAsStateWithLifecycle(initialValue = AppSettings.DEFAULT)
+    ConnectAppTheme(settings = settings, content = content)
 }

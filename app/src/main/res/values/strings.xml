@@ -81,6 +81,9 @@
     <string name="settings_auto_monitor">Авто-старт monitor после Connected</string>
     <string name="settings_auto_scroll">Автоскролл лога</string>
     <string name="settings_dark_theme">Тёмная тема</string>
+    <string name="settings_theme_system">Системная</string>
+    <string name="settings_theme_light">Светлая</string>
+    <string name="settings_theme_dark">Тёмная</string>
     <string name="hint_pin">PIN HC-05/HC-06 обычно 1234 или 0000</string>
 
     <!-- Log filter / hex -->

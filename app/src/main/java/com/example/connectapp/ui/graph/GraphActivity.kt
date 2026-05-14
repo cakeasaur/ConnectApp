@@ -49,7 +49,7 @@ import com.example.connectapp.R
 import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.models.TimedPoint
-import com.example.connectapp.ui.theme.ConnectAppTheme
+import com.example.connectapp.ui.theme.AppThemeWithSettings
 import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
@@ -66,7 +66,7 @@ class GraphActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            ConnectAppTheme {
+            AppThemeWithSettings {
                 GraphScreen(
                     onBack = { finish() },
                     onExport = { exportCsv() }

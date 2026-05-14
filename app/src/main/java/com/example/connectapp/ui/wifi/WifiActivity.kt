@@ -60,7 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.connectapp.R
 import com.example.connectapp.data.models.ConnectionState
-import com.example.connectapp.ui.theme.ConnectAppTheme
+import com.example.connectapp.ui.theme.AppThemeWithSettings
 import com.example.connectapp.ui.theme.ErrorRed
 import com.example.connectapp.ui.theme.SuccessGreen
 import com.example.connectapp.ui.theme.WarningAmber
@@ -73,7 +73,7 @@ class WifiActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            ConnectAppTheme {
+            AppThemeWithSettings {
                 WifiScreen(
                     viewModel = viewModel,
                     onBack = { finish() }
