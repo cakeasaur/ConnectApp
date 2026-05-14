@@ -75,7 +75,12 @@ class GraphActivity : ComponentActivity() {
             Toast.makeText(this, "Нет данных для экспорта", Toast.LENGTH_SHORT).show()
             return
         }
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        // Чистим старые экспорты, чтобы cacheDir не пух (ОС подчистит сам, но лучше явно).
+        runCatching {
+            cacheDir.listFiles { f -> f.name.startsWith("sensor_data_") && f.name.endsWith(".csv") }
+                ?.forEach { it.delete() }
+        }
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
         val file = File(cacheDir, "sensor_data_$timestamp.csv")
         file.writeText(csv)
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
@@ -98,10 +103,11 @@ class GraphActivity : ComponentActivity() {
         return buildString {
             appendLine("Index,Temperature (C),Accel X,Accel Y,Accel Z")
             for (i in 0 until maxLen) {
-                val t = temps.getOrNull(i)?.let { "%.2f".format(it) } ?: ""
-                val x = xs.getOrNull(i)?.let { "%.0f".format(it) } ?: ""
-                val y = ys.getOrNull(i)?.let { "%.0f".format(it) } ?: ""
-                val z = zs.getOrNull(i)?.let { "%.0f".format(it) } ?: ""
+                // Locale.ROOT — иначе RU-локаль вставит «28,50» и колонки CSV развалятся.
+                val t = temps.getOrNull(i)?.let { "%.2f".format(Locale.ROOT, it) } ?: ""
+                val x = xs.getOrNull(i)?.let { "%.0f".format(Locale.ROOT, it) } ?: ""
+                val y = ys.getOrNull(i)?.let { "%.0f".format(Locale.ROOT, it) } ?: ""
+                val z = zs.getOrNull(i)?.let { "%.0f".format(Locale.ROOT, it) } ?: ""
                 appendLine("$i,$t,$x,$y,$z")
             }
         }
