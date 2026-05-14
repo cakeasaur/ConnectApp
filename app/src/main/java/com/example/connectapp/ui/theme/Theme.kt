@@ -13,6 +13,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import com.example.connectapp.data.settings.AppSettings
 
 private val LightColors = lightColorScheme(
     primary = Primary,
@@ -30,11 +31,13 @@ private val DarkColors = darkColorScheme(
 
 @Composable
 fun ConnectAppTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    settings: AppSettings = AppSettings.DEFAULT,
     // Material You: на Android 12+ берём системные цвета — приятнее.
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    // settings.darkTheme: true=dark, false=light, null=system.
+    val darkTheme = settings.darkTheme ?: isSystemInDarkTheme()
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val ctx = LocalContext.current

@@ -10,17 +10,22 @@ import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.repository.BluetoothRepository
+import com.example.connectapp.data.settings.AppSettings
+import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
 import com.example.connectapp.utils.LogBuffer
+import com.example.connectapp.utils.SessionRecorder
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 class BluetoothViewModel(
     application: Application,
@@ -28,11 +33,17 @@ class BluetoothViewModel(
 ) : AndroidViewModel(application) {
 
     private val repo = BluetoothRepository(application.applicationContext)
+    private val settingsRepo = SettingsRepository(application.applicationContext)
+    private val recorder = SessionRecorder(application.applicationContext)
 
     val state: StateFlow<ConnectionState> = repo.state
     val incoming: SharedFlow<String> = repo.incoming
     val devices: StateFlow<List<BluetoothDeviceItem>> = repo.devices
     val scanning: StateFlow<Boolean> = repo.scanning
+    val lastPacketAt: StateFlow<Long?> = repo.lastPacketAt
+
+    val isRecording: StateFlow<Boolean> = recorder.isRecording
+    val recordingFile: StateFlow<File?> = recorder.currentFile
 
     private val logBuffer = LogBuffer(initial = handle.get<String>(KEY_LOG).orEmpty())
     val log: StateFlow<String> = logBuffer.text
@@ -40,18 +51,28 @@ class BluetoothViewModel(
     private val _sensorData = MutableStateFlow(SensorData())
     val sensorData: StateFlow<SensorData> = _sensorData.asStateFlow()
 
+    private val _settings = MutableStateFlow(AppSettings.DEFAULT)
+    val settings: StateFlow<AppSettings> = _settings.asStateFlow()
+
     var lastAddress: String?
         get() = handle.get<String>(KEY_ADDRESS)
         set(value) { handle[KEY_ADDRESS] = value }
 
     private val lineBuffer = StringBuilder()
     private var saveLogJob: Job? = null
+    private var autoReconnectTried = false
 
     init {
+        // Сохраняем настройки в свойство для синхронного доступа.
+        viewModelScope.launch {
+            settingsRepo.flow.collect { _settings.value = it }
+        }
+
         viewModelScope.launch {
             repo.incoming.collect { chunk ->
                 logBuffer.appendRaw(chunk, viewModelScope)
                 scheduleSave()
+                recorder.appendChunk(chunk)
                 parseChunk(chunk)
             }
         }
@@ -59,6 +80,17 @@ class BluetoothViewModel(
         viewModelScope.launch {
             CommandBus.commands.collect { cmd ->
                 if (state.value is ConnectionState.Connected) sendSilent(cmd)
+            }
+        }
+        // Auto-monitor: при переходе в Connected (если включено) шлём команду monitor.
+        // StateFlow уже эмитит только при изменении значения — не нужен distinctUntilChanged.
+        viewModelScope.launch {
+            state.collect { s ->
+                if (s is ConnectionState.Connected && _settings.value.autoMonitor) {
+                    // Маленькая задержка, чтобы устройство успело обработать handshake.
+                    delay(300)
+                    sendSilent(application.getString(com.example.connectapp.R.string.cmd_monitor))
+                }
             }
         }
     }
@@ -79,6 +111,20 @@ class BluetoothViewModel(
         repo.connect(address, viewModelScope)
     }
 
+    /** Однократная попытка авто-реконнекта при первом запуске экрана. */
+    fun maybeAutoReconnect() {
+        if (autoReconnectTried) return
+        autoReconnectTried = true
+        viewModelScope.launch {
+            val s = settingsRepo.flow.first()
+            val addr = lastAddress
+            if (s.autoReconnect && !addr.isNullOrBlank() && state.value is ConnectionState.Idle) {
+                logBuffer.appendLine("[auto] подключаюсь к $addr…", viewModelScope)
+                connect(addr)
+            }
+        }
+    }
+
     fun disconnect() {
         viewModelScope.launch { repo.disconnect() }
     }
@@ -95,12 +141,10 @@ class BluetoothViewModel(
         }
     }
 
-    /** Send without logging — used for silent auto-poll requests. */
     private fun sendSilent(payload: String) {
         viewModelScope.launch {
             repo.send(payload).onFailure { e ->
-                // Авто-опрос: ошибки помечаем явно, чтобы было ясно что не дошло.
-                logBuffer.appendLine("← [ERROR] auto-poll: ${e.message ?: "send failed"}", viewModelScope)
+                logBuffer.appendLine("← [ERROR] auto: ${e.message ?: "send failed"}", viewModelScope)
                 scheduleSave()
             }
         }
@@ -115,6 +159,17 @@ class BluetoothViewModel(
         SensorDataBus.clear()
     }
 
+    fun startRecording(): File? = recorder.start()
+    fun stopRecording(): File? = recorder.stop()
+    fun shareUriFor(file: File) = recorder.shareUriFor(file)
+
+    fun setAutoReconnect(value: Boolean) =
+        viewModelScope.launch { settingsRepo.setAutoReconnect(value) }
+    fun setAutoMonitor(value: Boolean) =
+        viewModelScope.launch { settingsRepo.setAutoMonitor(value) }
+    fun setAutoScrollLog(value: Boolean) =
+        viewModelScope.launch { settingsRepo.setAutoScrollLog(value) }
+
     private fun scheduleSave() {
         saveLogJob?.cancel()
         saveLogJob = viewModelScope.launch {
@@ -125,12 +180,11 @@ class BluetoothViewModel(
     }
 
     /**
-     * Accumulates incoming bytes into [lineBuffer], extracts complete lines,
-     * parses sensor values and pushes them to [SensorDataBus] for charting.
+     * Накапливает входящие байты в [lineBuffer], извлекает законченные строки,
+     * парсит и публикует значения в [SensorDataBus].
      */
     private fun parseChunk(chunk: String) {
-        // Normalise line endings: some firmware uses "\r\n" or just "\r".
-        // Without this, lines never get terminated and parsing never runs.
+        // Нормализуем переводы строк: некоторые прошивки шлют только '\r'.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
         lineBuffer.append(normalised)
         var idx: Int
@@ -140,12 +194,22 @@ class BluetoothViewModel(
             if (line.isNotEmpty()) {
                 DataParser.parse(line)?.let { parsed ->
                     _sensorData.update { it.merge(parsed) }
-                    parsed.temperature?.let { SensorDataBus.addTemperature(it) }
-                    if (parsed.accelX != null || parsed.accelY != null || parsed.accelZ != null) {
+                    parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
+                    parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
+                    if (parsed.accel1X != null || parsed.accel1Y != null || parsed.accel1Z != null) {
                         SensorDataBus.addAccel(
-                            parsed.accelX ?: 0f,
-                            parsed.accelY ?: 0f,
-                            parsed.accelZ ?: 0f
+                            slot = 1,
+                            x = parsed.accel1X ?: 0f,
+                            y = parsed.accel1Y ?: 0f,
+                            z = parsed.accel1Z ?: 0f
+                        )
+                    }
+                    if (parsed.accel2X != null || parsed.accel2Y != null || parsed.accel2Z != null) {
+                        SensorDataBus.addAccel(
+                            slot = 2,
+                            x = parsed.accel2X ?: 0f,
+                            y = parsed.accel2Y ?: 0f,
+                            z = parsed.accel2Z ?: 0f
                         )
                     }
                 }
@@ -158,6 +222,7 @@ class BluetoothViewModel(
         saveLogJob?.cancel()
         logBuffer.flush()
         handle[KEY_LOG] = logBuffer.text.value
+        recorder.stop()
         repo.release()
     }
 
