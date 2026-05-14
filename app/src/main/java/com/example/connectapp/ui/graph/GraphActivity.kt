@@ -174,21 +174,25 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            val cmdTemp = stringResource(R.string.cmd_temp)
-            val cmdAccel = stringResource(R.string.cmd_accel)
-            val cmdMonitor = stringResource(R.string.cmd_monitor)
+            // Команды под прошивку PIC24FJ128GB106:
+            //   "1" — Start enhanced monitoring (плата начнёт лить CSV)
+            //   "2" — Calibrate accelerometers
+            //   "3" — Quick test
+            val cmdStart = stringResource(R.string.cmd_one)
+            val cmdCalib = stringResource(R.string.cmd_two)
+            val cmdQuick = stringResource(R.string.cmd_three)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
-                    onClick = { CommandBus.send(cmdTemp) },
+                    onClick = { CommandBus.send(cmdCalib) },
                     modifier = Modifier.weight(1f)
-                ) { Text(cmdTemp) }
+                ) { Text("calib") }
                 FilledTonalButton(
-                    onClick = { CommandBus.send(cmdAccel) },
+                    onClick = { CommandBus.send(cmdQuick) },
                     modifier = Modifier.weight(1f)
-                ) { Text(cmdAccel) }
+                ) { Text("test") }
                 Button(
                     onClick = {
-                        CommandBus.send(cmdMonitor)
+                        CommandBus.send(cmdStart)
                         monitoring = !monitoring
                     },
                     modifier = Modifier.weight(1f)
@@ -198,7 +202,7 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                         contentDescription = null
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(if (monitoring) "stop" else cmdMonitor)
+                    Text(if (monitoring) "stop" else "monitor")
                 }
             }
 

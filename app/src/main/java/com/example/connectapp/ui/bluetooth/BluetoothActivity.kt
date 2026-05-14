@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
@@ -84,6 +85,7 @@ import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.settings.AppSettings
+import com.example.connectapp.data.settings.LineEnding
 import com.example.connectapp.ui.graph.GraphActivity
 import com.example.connectapp.ui.theme.ConnectAppTheme
 import com.example.connectapp.ui.wifi.LogView
@@ -203,7 +205,8 @@ private fun BluetoothScreen(
             onAutoReconnect = viewModel::setAutoReconnect,
             onAutoMonitor = viewModel::setAutoMonitor,
             onAutoScroll = viewModel::setAutoScrollLog,
-            onTheme = viewModel::setDarkTheme
+            onTheme = viewModel::setDarkTheme,
+            onLineEnding = viewModel::setLineEnding
         )
     }
 
@@ -476,14 +479,18 @@ private fun SettingsDialog(
     onAutoReconnect: (Boolean) -> Unit,
     onAutoMonitor: (Boolean) -> Unit,
     onAutoScroll: (Boolean) -> Unit,
-    onTheme: (Boolean?) -> Unit
+    onTheme: (Boolean?) -> Unit,
+    onLineEnding: (LineEnding) -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
         title = { Text(stringResource(R.string.settings_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
                 SwitchRow(
                     label = stringResource(R.string.settings_auto_reconnect),
                     checked = settings.autoReconnect,
@@ -501,9 +508,21 @@ private fun SettingsDialog(
                 )
                 Text(stringResource(R.string.settings_dark_theme), style = MaterialTheme.typography.labelLarge)
                 ThemeChips(current = settings.darkTheme, onChange = onTheme)
+                Text(stringResource(R.string.settings_terminator), style = MaterialTheme.typography.labelLarge)
+                LineEndingChips(current = settings.lineEnding, onChange = onLineEnding)
             }
         }
     )
+}
+
+@Composable
+private fun LineEndingChips(current: LineEnding, onChange: (LineEnding) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ThemeChip(stringResource(R.string.term_lf), selected = current == LineEnding.LF) { onChange(LineEnding.LF) }
+        ThemeChip(stringResource(R.string.term_cr), selected = current == LineEnding.CR) { onChange(LineEnding.CR) }
+        ThemeChip(stringResource(R.string.term_crlf), selected = current == LineEnding.CRLF) { onChange(LineEnding.CRLF) }
+        ThemeChip(stringResource(R.string.term_none), selected = current == LineEnding.NONE) { onChange(LineEnding.NONE) }
+    }
 }
 
 @Composable
@@ -706,15 +725,18 @@ private fun DeviceRow(device: BluetoothDeviceItem, onClick: () -> Unit) {
 
 @Composable
 private fun CommandChips(enabled: Boolean, onCommand: (String) -> Unit) {
+    // Команды под прошивку PIC24FJ128GB106 Sensor Monitor:
+    //   меню boot — '1'/'2'/'3'  (enhanced monitoring / calibrate / quick test)
+    //   UART menu — echo / help / clear / freq / test
     val commands = listOf(
+        stringResource(R.string.cmd_one),
+        stringResource(R.string.cmd_two),
+        stringResource(R.string.cmd_three),
         stringResource(R.string.cmd_help),
-        stringResource(R.string.cmd_status),
-        stringResource(R.string.cmd_temp),
-        stringResource(R.string.cmd_accel),
-        stringResource(R.string.cmd_time),
-        stringResource(R.string.cmd_version),
-        stringResource(R.string.cmd_relay),
-        stringResource(R.string.cmd_monitor)
+        stringResource(R.string.cmd_echo),
+        stringResource(R.string.cmd_clear),
+        stringResource(R.string.cmd_freq),
+        stringResource(R.string.cmd_test)
     )
     Row(
         modifier = Modifier

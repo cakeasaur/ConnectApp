@@ -68,14 +68,15 @@ class WifiClient {
         awaitClose { runCatching { input.close() } }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * Отправляет [payload] как есть. Терминатор (если нужен) добавляет вызывающий
+     * слой — у разных устройств он разный (\n / \r / \r\n / отсутствует).
+     */
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
         // Mutex prevents concurrent writes from interleaving at the byte level.
         sendMutex.withLock {
             val out = output ?: throw IllegalStateException("Socket is not connected")
-            // Append newline if missing — most devices (HC-05, ESP32, Arduino)
-            // expect line-delimited messages.
-            val msg = if (payload.endsWith("\n")) payload else "$payload\n"
-            out.write(msg.toByteArray(StandardCharsets.UTF_8))
+            out.write(payload.toByteArray(StandardCharsets.UTF_8))
             out.flush()
         }
     }

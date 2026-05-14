@@ -6,6 +6,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.repository.WifiRepository
+import com.example.connectapp.data.settings.AppSettings
+import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.LogBuffer
 import kotlinx.coroutines.Job
@@ -20,6 +22,8 @@ class WifiViewModel(
 ) : AndroidViewModel(application) {
 
     private val repo = WifiRepository()
+    private val settingsRepo = SettingsRepository(application.applicationContext)
+    @Volatile private var settings: AppSettings = AppSettings.DEFAULT
 
     val state: StateFlow<ConnectionState> = repo.state
     val incoming: SharedFlow<String> = repo.incoming
@@ -39,6 +43,9 @@ class WifiViewModel(
         set(value) { handle[KEY_PORT] = value }
 
     init {
+        viewModelScope.launch {
+            settingsRepo.flow.collect { settings = it }
+        }
         viewModelScope.launch {
             repo.incoming.collect { chunk ->
                 logBuffer.appendRaw(chunk, viewModelScope)
@@ -62,8 +69,9 @@ class WifiViewModel(
     fun send(payload: String) {
         logBuffer.appendLine("→ $payload", viewModelScope)
         scheduleSave()
+        val terminated = payload + settings.lineEnding.suffix
         viewModelScope.launch {
-            repo.send(payload).onFailure { e ->
+            repo.send(terminated).onFailure { e ->
                 logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
                 scheduleSave()
             }

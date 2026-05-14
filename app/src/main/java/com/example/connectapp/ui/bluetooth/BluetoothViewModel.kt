@@ -11,6 +11,7 @@ import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.repository.BluetoothRepository
 import com.example.connectapp.data.settings.AppSettings
+import com.example.connectapp.data.settings.LineEnding
 import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
@@ -85,14 +86,15 @@ class BluetoothViewModel(
                 if (state.value is ConnectionState.Connected) sendSilent(cmd)
             }
         }
-        // Auto-monitor: при переходе в Connected (если включено) шлём команду monitor.
-        // StateFlow уже эмитит только при изменении значения — не нужен distinctUntilChanged.
+        // Auto-monitor: при переходе в Connected (если включено) отправляем «1»
+        // — это команда «Start enhanced monitoring» в boot-меню PIC24FJ128GB106.
+        // Если нужно адаптировать под другую прошивку — поменяй строку cmd_one.
         viewModelScope.launch {
             state.collect { s ->
                 if (s is ConnectionState.Connected && _settings.value.autoMonitor) {
-                    // Маленькая задержка, чтобы устройство успело обработать handshake.
+                    // Задержка чтобы плата успела выпустить boot-меню и быть в режиме приёма.
                     delay(300)
-                    sendSilent(application.getString(com.example.connectapp.R.string.cmd_monitor))
+                    sendSilent(application.getString(com.example.connectapp.R.string.cmd_one))
                 }
             }
         }
@@ -136,8 +138,9 @@ class BluetoothViewModel(
     fun send(payload: String) {
         logBuffer.appendLine("→ $payload", viewModelScope)
         scheduleSave()
+        val terminated = payload + _settings.value.lineEnding.suffix
         viewModelScope.launch {
-            repo.send(payload).onFailure { e ->
+            repo.send(terminated).onFailure { e ->
                 logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
                 scheduleSave()
             }
@@ -145,8 +148,9 @@ class BluetoothViewModel(
     }
 
     private fun sendSilent(payload: String) {
+        val terminated = payload + _settings.value.lineEnding.suffix
         viewModelScope.launch {
-            repo.send(payload).onFailure { e ->
+            repo.send(terminated).onFailure { e ->
                 logBuffer.appendLine("← [ERROR] auto: ${e.message ?: "send failed"}", viewModelScope)
                 scheduleSave()
             }
@@ -174,6 +178,8 @@ class BluetoothViewModel(
         viewModelScope.launch { settingsRepo.setAutoScrollLog(value) }
     fun setDarkTheme(value: Boolean?) =
         viewModelScope.launch { settingsRepo.setDarkTheme(value) }
+    fun setLineEnding(value: LineEnding) =
+        viewModelScope.launch { settingsRepo.setLineEnding(value) }
 
     private fun scheduleSave() {
         saveLogJob?.cancel()
