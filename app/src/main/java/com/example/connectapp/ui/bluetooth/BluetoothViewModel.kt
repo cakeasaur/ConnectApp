@@ -12,6 +12,7 @@ import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.repository.BluetoothRepository
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
+import com.example.connectapp.utils.LogBuffer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,8 +34,8 @@ class BluetoothViewModel(
     val devices: StateFlow<List<BluetoothDeviceItem>> = repo.devices
     val scanning: StateFlow<Boolean> = repo.scanning
 
-    private val _log = MutableStateFlow(handle.get<String>(KEY_LOG).orEmpty())
-    val log: StateFlow<String> = _log.asStateFlow()
+    private val logBuffer = LogBuffer(initial = handle.get<String>(KEY_LOG).orEmpty())
+    val log: StateFlow<String> = logBuffer.text
 
     private val _sensorData = MutableStateFlow(SensorData())
     val sensorData: StateFlow<SensorData> = _sensorData.asStateFlow()
@@ -49,7 +50,8 @@ class BluetoothViewModel(
     init {
         viewModelScope.launch {
             repo.incoming.collect { chunk ->
-                appendLog(chunk)
+                logBuffer.appendRaw(chunk, viewModelScope)
+                scheduleSave()
                 parseChunk(chunk)
             }
         }
@@ -83,10 +85,12 @@ class BluetoothViewModel(
 
     /** Send a message and echo it to the log (user-initiated). */
     fun send(payload: String) {
-        appendLog("→ $payload\n")
+        logBuffer.appendLine("→ $payload", viewModelScope)
+        scheduleSave()
         viewModelScope.launch {
             repo.send(payload).onFailure { e ->
-                appendLog("← [ERROR] ${e.message ?: "send failed"}\n")
+                logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
+                scheduleSave()
             }
         }
     }
@@ -96,35 +100,27 @@ class BluetoothViewModel(
         viewModelScope.launch {
             repo.send(payload).onFailure { e ->
                 // Авто-опрос: ошибки помечаем явно, чтобы было ясно что не дошло.
-                appendLog("← [ERROR] auto-poll: ${e.message ?: "send failed"}\n")
+                logBuffer.appendLine("← [ERROR] auto-poll: ${e.message ?: "send failed"}", viewModelScope)
+                scheduleSave()
             }
         }
     }
 
     fun clearLog() {
-        _log.value = ""
+        saveLogJob?.cancel()
+        logBuffer.clear(viewModelScope)
         handle[KEY_LOG] = ""
         lineBuffer.clear()
         _sensorData.value = SensorData()
         SensorDataBus.clear()
     }
 
-    private fun appendLog(chunk: String) {
-        // Cap log size — drop oldest characters to prevent OOM during monitor mode.
-        val raw = _log.value + chunk
-        val updated = if (raw.length > Constants.MAX_LOG_CHARS) {
-            raw.takeLast(Constants.MAX_LOG_CHARS)
-        } else {
-            raw
-        }
-        _log.value = updated
-
-        // Debounce SavedStateHandle writes — serialisation is expensive and causes
-        // jank when called on every incoming chunk (e.g. during monitor mode).
+    private fun scheduleSave() {
         saveLogJob?.cancel()
         saveLogJob = viewModelScope.launch {
             delay(Constants.LOG_SAVE_DEBOUNCE_MS)
-            handle[KEY_LOG] = _log.value
+            logBuffer.flush()
+            handle[KEY_LOG] = logBuffer.text.value
         }
     }
 
@@ -160,8 +156,8 @@ class BluetoothViewModel(
     override fun onCleared() {
         super.onCleared()
         saveLogJob?.cancel()
-        // Save log one final time before ViewModel is destroyed.
-        handle[KEY_LOG] = _log.value
+        logBuffer.flush()
+        handle[KEY_LOG] = logBuffer.text.value
         repo.release()
     }
 

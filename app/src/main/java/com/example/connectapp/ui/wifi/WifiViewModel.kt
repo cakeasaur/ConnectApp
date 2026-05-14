@@ -3,16 +3,15 @@ package com.example.connectapp.ui.wifi
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.repository.WifiRepository
 import com.example.connectapp.utils.Constants
-import androidx.lifecycle.viewModelScope
+import com.example.connectapp.utils.LogBuffer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class WifiViewModel(
@@ -25,9 +24,9 @@ class WifiViewModel(
     val state: StateFlow<ConnectionState> = repo.state
     val incoming: SharedFlow<String> = repo.incoming
 
-    /** Accumulated log, persisted across configuration changes. */
-    private val _log = MutableStateFlow(handle.get<String>(KEY_LOG).orEmpty())
-    val log: StateFlow<String> = _log.asStateFlow()
+    /** Аккумулированный лог, переживающий смену конфигурации. */
+    private val logBuffer = LogBuffer(initial = handle.get<String>(KEY_LOG).orEmpty())
+    val log: StateFlow<String> = logBuffer.text
 
     private var saveLogJob: Job? = null
 
@@ -41,7 +40,10 @@ class WifiViewModel(
 
     init {
         viewModelScope.launch {
-            repo.incoming.collect { chunk -> appendLog(chunk) }
+            repo.incoming.collect { chunk ->
+                logBuffer.appendRaw(chunk, viewModelScope)
+                scheduleSave()
+            }
         }
     }
 
@@ -58,46 +60,37 @@ class WifiViewModel(
     }
 
     fun send(payload: String) {
-        // Echo outgoing message to log so user can see what they sent.
-        appendLog("→ $payload\n")
+        logBuffer.appendLine("→ $payload", viewModelScope)
+        scheduleSave()
         viewModelScope.launch {
             repo.send(payload).onFailure { e ->
-                appendLog("← [ERROR] ${e.message ?: "send failed"}\n")
+                logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
+                scheduleSave()
             }
         }
     }
 
     fun clearLog() {
         saveLogJob?.cancel()
-        _log.value = ""
+        logBuffer.clear(viewModelScope)
         handle[KEY_LOG] = ""
     }
 
-    private fun appendLog(chunk: String) {
-        // Ограничиваем размер лога — иначе OOM при длительной работе.
-        val raw = _log.value + chunk
-        val updated = if (raw.length > Constants.MAX_LOG_CHARS) {
-            raw.takeLast(Constants.MAX_LOG_CHARS)
-        } else {
-            raw
-        }
-        _log.value = updated
-
-        // Debounce записи в SavedStateHandle — сериализация дорогая.
+    /** Сохраняем лог в SavedStateHandle с debounce — сериализация в Bundle дорогая. */
+    private fun scheduleSave() {
         saveLogJob?.cancel()
         saveLogJob = viewModelScope.launch {
             delay(Constants.LOG_SAVE_DEBOUNCE_MS)
-            handle[KEY_LOG] = _log.value
+            logBuffer.flush()
+            handle[KEY_LOG] = logBuffer.text.value
         }
     }
 
     override fun onCleared() {
         super.onCleared()
         saveLogJob?.cancel()
-        // Финальная синхронная запись лога перед уничтожением VM.
-        handle[KEY_LOG] = _log.value
-        // viewModelScope is auto-cancelled here, which triggers readerJob cancellation.
-        // Socket cleanup happens in repo.disconnect() via finally block in coroutine.
+        logBuffer.flush()
+        handle[KEY_LOG] = logBuffer.text.value
     }
 
     companion object {
