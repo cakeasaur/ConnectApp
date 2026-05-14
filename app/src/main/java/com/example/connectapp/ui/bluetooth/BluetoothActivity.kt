@@ -65,10 +65,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.connectapp.R
 import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.SensorData
@@ -86,7 +88,7 @@ class BluetoothActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         if (!viewModel.isAvailable()) {
-            Toast.makeText(this, "Bluetooth недоступен на этом устройстве", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.toast_bluetooth_unavailable), Toast.LENGTH_LONG).show()
             finish()
             return
         }
@@ -125,7 +127,7 @@ private fun BluetoothScreen(
         if (viewModel.isEnabled()) {
             viewModel.loadBonded()
         } else {
-            Toast.makeText(ctx, "Bluetooth выключен", Toast.LENGTH_LONG).show()
+            Toast.makeText(ctx, ctx.getString(R.string.toast_bluetooth_off), Toast.LENGTH_LONG).show()
             (ctx as? ComponentActivity)?.finish()
         }
     }
@@ -139,7 +141,7 @@ private fun BluetoothScreen(
             ActivityCompat.checkSelfPermission(ctx, android.Manifest.permission.BLUETOOTH_CONNECT)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            Toast.makeText(ctx, "Нужно разрешение BLUETOOTH_CONNECT", Toast.LENGTH_LONG).show()
+            Toast.makeText(ctx, ctx.getString(R.string.toast_bluetooth_perm_required), Toast.LENGTH_LONG).show()
             (ctx as? ComponentActivity)?.finish()
             return
         }
@@ -153,7 +155,7 @@ private fun BluetoothScreen(
         if (granted) {
             ensureBluetoothEnabled()
         } else {
-            Toast.makeText(ctx, "Нужны разрешения для работы Bluetooth", Toast.LENGTH_LONG).show()
+            Toast.makeText(ctx, ctx.getString(R.string.toast_bluetooth_perms_required), Toast.LENGTH_LONG).show()
             (ctx as? ComponentActivity)?.finish()
         }
     }
@@ -176,15 +178,15 @@ private fun BluetoothScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bluetooth (SPP)") },
+                title = { Text(stringResource(R.string.btn_bluetooth)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.btn_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = onOpenGraphs) {
-                        Icon(Icons.Filled.Insights, contentDescription = "Графики")
+                        Icon(Icons.Filled.Insights, contentDescription = stringResource(R.string.btn_graphs))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -216,7 +218,7 @@ private fun BluetoothScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            "Устройства",
+                            stringResource(R.string.label_devices),
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.weight(1f)
                         )
@@ -238,11 +240,11 @@ private fun BluetoothScreen(
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                Text("Стоп")
+                                Text(stringResource(R.string.btn_stop))
                             } else {
                                 Icon(Icons.AutoMirrored.Filled.BluetoothSearching, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
-                                Text("Поиск")
+                                Text(stringResource(R.string.btn_scan))
                             }
                         }
                     }
@@ -269,7 +271,7 @@ private fun BluetoothScreen(
                 OutlinedTextField(
                     value = payload,
                     onValueChange = { payload = it },
-                    label = { Text("Сообщение") },
+                    label = { Text(stringResource(R.string.hint_payload)) },
                     singleLine = true,
                     enabled = connected,
                     modifier = Modifier.weight(1f)
@@ -286,7 +288,7 @@ private fun BluetoothScreen(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                     modifier = Modifier.size(56.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.btn_send))
                 }
             }
 
@@ -295,7 +297,7 @@ private fun BluetoothScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Лог", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.label_log), style = MaterialTheme.typography.titleLarge)
                 Row {
                     OutlinedButton(
                         onClick = { viewModel.disconnect() },
@@ -303,10 +305,10 @@ private fun BluetoothScreen(
                     ) {
                         Icon(Icons.Filled.LinkOff, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Отключить")
+                        Text(stringResource(R.string.btn_disconnect))
                     }
                     IconButton(onClick = { viewModel.clearLog() }) {
-                        Icon(Icons.Filled.ClearAll, contentDescription = "Очистить")
+                        Icon(Icons.Filled.ClearAll, contentDescription = stringResource(R.string.btn_clear))
                     }
                 }
             }
@@ -336,15 +338,16 @@ private fun SensorPanel(data: SensorData) {
             if (hasTemp) {
                 SensorTile(
                     icon = Icons.Filled.Thermostat,
-                    label = "Температура",
-                    value = "%.1f°C".format(data.temperature)
+                    label = stringResource(R.string.label_temperature),
+                    value = "%.1f°C".format(java.util.Locale.ROOT, data.temperature)
                 )
             }
             if (hasAccel) {
                 SensorTile(
                     icon = Icons.Filled.Tune,
-                    label = "Акселерометр",
+                    label = stringResource(R.string.label_accelerometer),
                     value = "X:%.1f  Y:%.1f  Z:%.1f".format(
+                        java.util.Locale.ROOT,
                         data.accelX ?: 0f,
                         data.accelY ?: 0f,
                         data.accelZ ?: 0f
@@ -410,7 +413,7 @@ private fun DeviceList(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                "Нет устройств — нажмите «Поиск»",
+                stringResource(R.string.label_no_devices),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -470,7 +473,7 @@ private fun DeviceRow(device: BluetoothDeviceItem, onClick: () -> Unit) {
         }
         AssistChip(
             onClick = onClick,
-            label = { Text(if (device.bonded) "Сопряжено" else "Найдено") },
+            label = { Text(stringResource(if (device.bonded) R.string.device_bonded else R.string.device_found)) },
             colors = AssistChipDefaults.assistChipColors(
                 containerColor = if (device.bonded)
                     MaterialTheme.colorScheme.secondaryContainer
@@ -483,7 +486,14 @@ private fun DeviceRow(device: BluetoothDeviceItem, onClick: () -> Unit) {
 @Composable
 private fun CommandChips(enabled: Boolean, onCommand: (String) -> Unit) {
     val commands = listOf(
-        "help", "status", "temp", "accel", "time", "version", "relay", "monitor"
+        stringResource(R.string.cmd_help),
+        stringResource(R.string.cmd_status),
+        stringResource(R.string.cmd_temp),
+        stringResource(R.string.cmd_accel),
+        stringResource(R.string.cmd_time),
+        stringResource(R.string.cmd_version),
+        stringResource(R.string.cmd_relay),
+        stringResource(R.string.cmd_monitor)
     )
     Row(
         modifier = Modifier

@@ -1,25 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ConnectApp</string>
-    <string name="main_title">Выберите тип подключения</string>
+
+    <!-- Main screen -->
+    <string name="main_subtitle">Двусторонняя связь с устройствами</string>
+    <string name="main_footer">MVVM • Coroutines • Material 3</string>
+    <string name="wifi_subtitle">Подключение по IP и порту</string>
+    <string name="bluetooth_subtitle">Поиск и подключение к устройству</string>
+
+    <!-- Common -->
     <string name="btn_wifi">Wi-Fi (TCP)</string>
     <string name="btn_bluetooth">Bluetooth (SPP)</string>
     <string name="btn_connect">Подключить</string>
     <string name="btn_disconnect">Отключить</string>
     <string name="btn_send">Отправить</string>
     <string name="btn_clear">Очистить</string>
+    <string name="btn_clear_log">Очистить лог</string>
     <string name="btn_scan">Поиск</string>
-    <string name="hint_ip">IP адрес</string>
+    <string name="btn_stop">Стоп</string>
+    <string name="btn_back">Назад</string>
+    <string name="btn_graphs">Графики</string>
+    <string name="hint_ip">IP-адрес</string>
     <string name="hint_port">Порт</string>
     <string name="hint_payload">Сообщение</string>
+    <string name="label_log">Лог</string>
+    <string name="label_devices">Устройства</string>
+    <string name="label_no_data">— нет данных —</string>
+    <string name="label_no_devices">Нет устройств — нажмите «Поиск»</string>
+    <string name="label_temperature">Температура</string>
+    <string name="label_accelerometer">Акселерометр</string>
+    <string name="label_temperature_unit">Температура °C</string>
+
+    <!-- Connection states -->
     <string name="status_idle">Не подключено</string>
-    <string name="cmd_help">help</string>
-    <string name="cmd_status">status</string>
-    <string name="cmd_temp">temp</string>
-    <string name="cmd_accel">accel</string>
-    <string name="cmd_time">time</string>
-    <string name="cmd_version">version</string>
-    <string name="cmd_relay">relay</string>
-    <string name="cmd_monitor">monitor</string>
-    <string name="btn_graphs">📊 Графики</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_connected">Подключено</string>
+    <string name="status_disconnected">Соединение потеряно</string>
+    <string name="status_reconnecting">Переподключение (попытка %1$d)</string>
+    <string name="status_error">Ошибка: %1$s</string>
+
+    <!-- Toasts / errors -->
+    <string name="toast_invalid_address">Введите валидный IP и порт (1..65535)</string>
+    <string name="toast_connection_lost">Соединение потеряно</string>
+    <string name="toast_error">Ошибка: %1$s</string>
+    <string name="toast_bluetooth_unavailable">Bluetooth недоступен на этом устройстве</string>
+    <string name="toast_bluetooth_off">Bluetooth выключен</string>
+    <string name="toast_bluetooth_perm_required">Нужно разрешение BLUETOOTH_CONNECT</string>
+    <string name="toast_bluetooth_perms_required">Нужны разрешения для работы Bluetooth</string>
+
+    <!-- Bluetooth device chips -->
+    <string name="device_bonded">Сопряжено</string>
+    <string name="device_found">Найдено</string>
+
+    <!-- Graphs -->
+    <string name="graph_title">Графики датчиков</string>
+    <string name="graph_export_csv">CSV</string>
+    <string name="graph_no_export_data">Нет данных для экспорта</string>
+    <string name="graph_export_intent_title">Экспорт данных</string>
+    <string name="graph_export_subject">Данные датчиков ConnectApp</string>
+    <string name="graph_temp_hint">Нажмите «temp» или включите авто-опрос</string>
+    <string name="graph_accel_hint">Нажмите «accel» или включите авто-опрос</string>
+
+    <!-- Quick commands (отправляются устройству, не локализуются) -->
+    <string name="cmd_help" translatable="false">help</string>
+    <string name="cmd_status" translatable="false">status</string>
+    <string name="cmd_temp" translatable="false">temp</string>
+    <string name="cmd_accel" translatable="false">accel</string>
+    <string name="cmd_time" translatable="false">time</string>
+    <string name="cmd_version" translatable="false">version</string>
+    <string name="cmd_relay" translatable="false">relay</string>
+    <string name="cmd_monitor" translatable="false">monitor</string>
 </resources>

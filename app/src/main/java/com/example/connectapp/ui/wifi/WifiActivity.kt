@@ -51,12 +51,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.connectapp.R
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.ui.theme.ConnectAppTheme
 import com.example.connectapp.ui.theme.ErrorRed
@@ -96,12 +98,12 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
     LaunchedEffect(state) {
         when (val s = state) {
             is ConnectionState.Error -> {
-                Toast.makeText(ctx, "Ошибка: ${s.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, ctx.getString(R.string.toast_error, s.message), Toast.LENGTH_LONG).show()
                 delay(1500)
                 onBack()
             }
             is ConnectionState.Disconnected -> {
-                Toast.makeText(ctx, "Соединение потеряно", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, ctx.getString(R.string.toast_connection_lost), Toast.LENGTH_SHORT).show()
                 delay(1500)
                 onBack()
             }
@@ -115,10 +117,10 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Wi-Fi (TCP)") },
+                title = { Text(stringResource(R.string.btn_wifi)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.btn_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -149,7 +151,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                     OutlinedTextField(
                         value = host,
                         onValueChange = { host = it },
-                        label = { Text("IP-адрес") },
+                        label = { Text(stringResource(R.string.hint_ip)) },
                         singleLine = true,
                         enabled = !connected,
                         modifier = Modifier.fillMaxWidth()
@@ -157,7 +159,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                     OutlinedTextField(
                         value = port,
                         onValueChange = { port = it.filter { c -> c.isDigit() } },
-                        label = { Text("Порт") },
+                        label = { Text(stringResource(R.string.hint_port)) },
                         singleLine = true,
                         enabled = !connected,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -168,7 +170,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                             onClick = {
                                 val p = port.toIntOrNull()
                                 if (host.isBlank() || p == null || p !in 1..65535) {
-                                    Toast.makeText(ctx, "Введите валидный IP и порт (1..65535)", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, ctx.getString(R.string.toast_invalid_address), Toast.LENGTH_SHORT).show()
                                 } else {
                                     viewModel.connect(host.trim(), p)
                                 }
@@ -178,7 +180,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                         ) {
                             Icon(Icons.Filled.Link, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Подключить")
+                            Text(stringResource(R.string.btn_connect))
                         }
                         OutlinedButton(
                             onClick = { viewModel.disconnect() },
@@ -187,7 +189,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                         ) {
                             Icon(Icons.Filled.LinkOff, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Отключить")
+                            Text(stringResource(R.string.btn_disconnect))
                         }
                     }
                 }
@@ -202,7 +204,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                 OutlinedTextField(
                     value = payload,
                     onValueChange = { payload = it },
-                    label = { Text("Сообщение") },
+                    label = { Text(stringResource(R.string.hint_payload)) },
                     singleLine = true,
                     enabled = connected,
                     modifier = Modifier.weight(1f)
@@ -219,7 +221,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                     modifier = Modifier.size(56.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.btn_send))
                 }
             }
 
@@ -229,11 +231,11 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Лог",
+                    text = stringResource(R.string.label_log),
                     style = MaterialTheme.typography.titleLarge
                 )
                 IconButton(onClick = { viewModel.clearLog() }) {
-                    Icon(Icons.Filled.ClearAll, contentDescription = "Очистить лог")
+                    Icon(Icons.Filled.ClearAll, contentDescription = stringResource(R.string.btn_clear_log))
                 }
             }
 
@@ -245,12 +247,12 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
 @Composable
 internal fun StatusBadge(state: ConnectionState) {
     val (label, color) = when (state) {
-        is ConnectionState.Idle -> "Не подключено" to MaterialTheme.colorScheme.onSurfaceVariant
-        is ConnectionState.Connecting -> "Подключение…" to WarningAmber
-        is ConnectionState.Connected -> "Подключено" to SuccessGreen
-        is ConnectionState.Disconnected -> "Соединение потеряно" to ErrorRed
-        is ConnectionState.Reconnecting -> "Переподключение (попытка ${state.attempt})" to WarningAmber
-        is ConnectionState.Error -> "Ошибка: ${state.message}" to ErrorRed
+        is ConnectionState.Idle -> stringResource(R.string.status_idle) to MaterialTheme.colorScheme.onSurfaceVariant
+        is ConnectionState.Connecting -> stringResource(R.string.status_connecting) to WarningAmber
+        is ConnectionState.Connected -> stringResource(R.string.status_connected) to SuccessGreen
+        is ConnectionState.Disconnected -> stringResource(R.string.status_disconnected) to ErrorRed
+        is ConnectionState.Reconnecting -> stringResource(R.string.status_reconnecting, state.attempt) to WarningAmber
+        is ConnectionState.Error -> stringResource(R.string.status_error, state.message) to ErrorRed
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -291,7 +293,7 @@ internal fun LogView(log: String, modifier: Modifier = Modifier) {
             .padding(12.dp)
     ) {
         Text(
-            text = if (log.isEmpty()) "— нет данных —" else log,
+            text = if (log.isEmpty()) stringResource(R.string.label_no_data) else log,
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurface,

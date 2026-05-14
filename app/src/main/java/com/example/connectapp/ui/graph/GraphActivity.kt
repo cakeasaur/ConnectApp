@@ -38,10 +38,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.connectapp.R
 import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.ui.theme.ConnectAppTheme
@@ -72,7 +74,7 @@ class GraphActivity : ComponentActivity() {
     private fun exportCsv() {
         val csv = buildCsv()
         if (csv == null) {
-            Toast.makeText(this, "Нет данных для экспорта", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.graph_no_export_data), Toast.LENGTH_SHORT).show()
             return
         }
         // Чистим старые экспорты, чтобы cacheDir не пух (ОС подчистит сам, но лучше явно).
@@ -87,10 +89,10 @@ class GraphActivity : ComponentActivity() {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/csv"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "Данные датчиков ConnectApp")
+            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.graph_export_subject))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(intent, "Экспорт данных"))
+        startActivity(Intent.createChooser(intent, getString(R.string.graph_export_intent_title)))
     }
 
     private fun buildCsv(): String? {
@@ -126,15 +128,15 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Графики датчиков") },
+                title = { Text(stringResource(R.string.graph_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.btn_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = onExport) {
-                        Icon(Icons.Filled.FileDownload, contentDescription = "CSV")
+                        Icon(Icons.Filled.FileDownload, contentDescription = stringResource(R.string.graph_export_csv))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -152,17 +154,20 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
         ) {
             // Управление: запросы по команде + переключатель monitor
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val cmdTemp = stringResource(R.string.cmd_temp)
+                val cmdAccel = stringResource(R.string.cmd_accel)
+                val cmdMonitor = stringResource(R.string.cmd_monitor)
                 FilledTonalButton(
-                    onClick = { CommandBus.send("temp") },
+                    onClick = { CommandBus.send(cmdTemp) },
                     modifier = Modifier.weight(1f)
-                ) { Text("temp") }
+                ) { Text(cmdTemp) }
                 FilledTonalButton(
-                    onClick = { CommandBus.send("accel") },
+                    onClick = { CommandBus.send(cmdAccel) },
                     modifier = Modifier.weight(1f)
-                ) { Text("accel") }
+                ) { Text(cmdAccel) }
                 Button(
                     onClick = {
-                        CommandBus.send("monitor")
+                        CommandBus.send(cmdMonitor)
                         monitoring = !monitoring
                     },
                     modifier = Modifier.weight(1f)
@@ -172,16 +177,16 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                         contentDescription = null
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(if (monitoring) "stop" else "monitor")
+                    Text(if (monitoring) "stop" else cmdMonitor)
                 }
             }
 
-            Text("Температура °C", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
             ChartCard {
                 TemperatureChart(values = temps)
             }
 
-            Text("Акселерометр", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.label_accelerometer), style = MaterialTheme.typography.titleLarge)
             ChartCard {
                 AccelChart(xs = xs, ys = ys, zs = zs)
             }
@@ -204,12 +209,13 @@ private fun ChartCard(content: @Composable () -> Unit) {
 
 @Composable
 private fun TemperatureChart(values: List<Float>) {
+    val noDataText = stringResource(R.string.graph_temp_hint)
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
             LineChart(ctx).apply {
                 description.isEnabled = false
-                setNoDataText("Нажмите «temp» или включите авто-опрос")
+                setNoDataText(noDataText)
                 setNoDataTextColor(Color.GRAY)
                 setTouchEnabled(true)
                 isDragEnabled = true
@@ -250,12 +256,13 @@ private fun TemperatureChart(values: List<Float>) {
 
 @Composable
 private fun AccelChart(xs: List<Float>, ys: List<Float>, zs: List<Float>) {
+    val noDataText = stringResource(R.string.graph_accel_hint)
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
             LineChart(ctx).apply {
                 description.isEnabled = false
-                setNoDataText("Нажмите «accel» или включите авто-опрос")
+                setNoDataText(noDataText)
                 setNoDataTextColor(Color.GRAY)
                 setTouchEnabled(true)
                 isDragEnabled = true
