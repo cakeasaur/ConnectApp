@@ -29,7 +29,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
@@ -203,7 +202,8 @@ private fun BluetoothScreen(
             onDismiss = { settingsOpen = false },
             onAutoReconnect = viewModel::setAutoReconnect,
             onAutoMonitor = viewModel::setAutoMonitor,
-            onAutoScroll = viewModel::setAutoScrollLog
+            onAutoScroll = viewModel::setAutoScrollLog,
+            onTheme = viewModel::setDarkTheme
         )
     }
 
@@ -244,12 +244,15 @@ private fun BluetoothScreen(
             )
         }
     ) { padding ->
+        // НЕ оборачиваем в Column.verticalScroll — внутри есть LogView со своим
+        // прокручиваемым Box, что даст вложенный scroll одного направления и
+        // ломает жесты + бросает Compose-warning'и. Вместо этого делаем все
+        // элементы выше лога фиксированной высоты, а лог занимает остаток.
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             StatusBadge(state = state)
@@ -384,11 +387,12 @@ private fun BluetoothScreen(
             val displayLog = remember(log, filter, hexMode) {
                 renderLog(log, filter, hexMode)
             }
+            // weight(1f) → лог занимает остаток высоты Scaffold-padding'а.
             LogView(
                 log = displayLog,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 220.dp, max = 480.dp),
+                    .weight(1f),
                 autoScroll = settings.autoScrollLog
             )
         }
@@ -443,7 +447,9 @@ private fun HeartbeatRow(state: ConnectionState, lastPacketAt: Long?) {
     if (state !is ConnectionState.Connected || lastPacketAt == null) return
     // Перетриггер каждую секунду чтобы отображение возраста обновлялось.
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(lastPacketAt) {
+    // Перетриггерим только при смене Connected/Disconnected — не при каждом
+    // полученном пакете, иначе корутина пересоздаётся ~10 раз в секунду.
+    LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
             delay(1000)
@@ -469,14 +475,15 @@ private fun SettingsDialog(
     onDismiss: () -> Unit,
     onAutoReconnect: (Boolean) -> Unit,
     onAutoMonitor: (Boolean) -> Unit,
-    onAutoScroll: (Boolean) -> Unit
+    onAutoScroll: (Boolean) -> Unit,
+    onTheme: (Boolean?) -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
         title = { Text(stringResource(R.string.settings_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SwitchRow(
                     label = stringResource(R.string.settings_auto_reconnect),
                     checked = settings.autoReconnect,
@@ -492,8 +499,32 @@ private fun SettingsDialog(
                     checked = settings.autoScrollLog,
                     onChange = onAutoScroll
                 )
+                Text(stringResource(R.string.settings_dark_theme), style = MaterialTheme.typography.labelLarge)
+                ThemeChips(current = settings.darkTheme, onChange = onTheme)
             }
         }
+    )
+}
+
+@Composable
+private fun ThemeChips(current: Boolean?, onChange: (Boolean?) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ThemeChip(stringResource(R.string.settings_theme_system), selected = current == null) { onChange(null) }
+        ThemeChip(stringResource(R.string.settings_theme_light), selected = current == false) { onChange(false) }
+        ThemeChip(stringResource(R.string.settings_theme_dark), selected = current == true) { onChange(true) }
+    }
+}
+
+@Composable
+private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    AssistChip(
+        onClick = onClick,
+        label = { Text(label) },
+        colors = AssistChipDefaults.assistChipColors(
+            containerColor = if (selected)
+                MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant
+        )
     )
 }
 
