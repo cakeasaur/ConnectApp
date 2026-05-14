@@ -27,11 +27,4 @@ object Constants {
 
     /** Delay before persisting log to SavedStateHandle (debounce), ms. */
     const val LOG_SAVE_DEBOUNCE_MS = 2_000L
-
-    /** Minimum interval between chart refreshes, ms. */
-    const val CHART_THROTTLE_MS = 300L
-
-    /** Permission request codes. */
-    const val REQ_BLUETOOTH_PERMS = 1001
-    const val REQ_WIFI_PERMS = 1002
 }

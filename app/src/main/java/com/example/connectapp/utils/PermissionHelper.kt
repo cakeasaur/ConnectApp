@@ -19,9 +19,8 @@ object PermissionHelper {
         )
     }
 
-    fun wifiPermissions(): Array<String> = arrayOf(
-        Manifest.permission.INTERNET
-    )
+    // Wi-Fi не нуждается в runtime-разрешениях: INTERNET — install-time,
+    // выдаётся автоматически при установке. Отдельный метод только путал.
 
     fun hasAll(context: Context, permissions: Array<String>): Boolean =
         permissions.all {
