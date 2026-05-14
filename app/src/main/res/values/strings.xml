@@ -61,6 +61,33 @@
     <string name="graph_temp_hint">Нажмите «temp» или включите авто-опрос</string>
     <string name="graph_accel_hint">Нажмите «accel» или включите авто-опрос</string>
 
+    <!-- Heartbeat / sensor stats -->
+    <string name="hb_just_now">только что</string>
+    <string name="hb_seconds_ago">%1$d с назад</string>
+    <string name="hb_minutes_ago">%1$d мин назад</string>
+    <string name="hb_label">последний пакет:</string>
+
+    <!-- Recording -->
+    <string name="rec_start">●REC</string>
+    <string name="rec_stop">■STOP</string>
+    <string name="rec_started">Запись началась: %1$s</string>
+    <string name="rec_stopped">Сохранено: %1$s</string>
+    <string name="rec_share">Отправить дамп</string>
+    <string name="rec_share_subject">ConnectApp raw session</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Настройки</string>
+    <string name="settings_auto_reconnect">Авто-подключение к последнему устройству</string>
+    <string name="settings_auto_monitor">Авто-старт monitor после Connected</string>
+    <string name="settings_auto_scroll">Автоскролл лога</string>
+    <string name="settings_dark_theme">Тёмная тема</string>
+    <string name="hint_pin">PIN HC-05/HC-06 обычно 1234 или 0000</string>
+
+    <!-- Log filter / hex -->
+    <string name="log_filter">Фильтр (grep)</string>
+    <string name="log_view_text">Text</string>
+    <string name="log_view_hex">Hex</string>
+
     <!-- Quick commands (отправляются устройству, не локализуются) -->
     <string name="cmd_help" translatable="false">help</string>
     <string name="cmd_status" translatable="false">status</string>

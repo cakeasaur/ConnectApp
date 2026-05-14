@@ -277,12 +277,14 @@ internal fun StatusBadge(state: ConnectionState) {
 }
 
 @Composable
-internal fun LogView(log: String, modifier: Modifier = Modifier) {
+internal fun LogView(log: String, modifier: Modifier = Modifier, autoScroll: Boolean = true) {
     val scroll = rememberScrollState()
-    // Автоскролл при добавлении новых строк.
-    LaunchedEffect(log) {
-        delay(30)
-        scroll.scrollTo(scroll.maxValue)
+    // Автоскролл при добавлении новых строк (если включён в настройках).
+    LaunchedEffect(log, autoScroll) {
+        if (autoScroll) {
+            delay(30)
+            scroll.scrollTo(scroll.maxValue)
+        }
     }
     Box(
         modifier = modifier
