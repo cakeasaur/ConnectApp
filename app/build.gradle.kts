@@ -86,6 +86,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // DataStore Preferences (настройки приложения)
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
     // Charts (MPAndroidChart обёрнут в AndroidView)
     implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
 
