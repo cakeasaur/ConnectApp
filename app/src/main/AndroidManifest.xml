@@ -17,6 +17,7 @@
     <!-- Bluetooth runtime (API 31+) -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
 
     <!-- Location: required for BT scan on API < 31 -->
@@ -33,6 +34,8 @@
 
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.ConnectApp">
