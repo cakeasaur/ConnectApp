@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -35,11 +36,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.gestures.detectTapGestures
+import com.example.connectapp.R
 import com.example.connectapp.ui.bluetooth.BluetoothActivity
 import com.example.connectapp.ui.theme.ConnectAppTheme
 import com.example.connectapp.ui.wifi.WifiActivity
@@ -70,12 +74,12 @@ private fun MainScreen() {
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Text(
-                text = "ConnectApp",
+                text = stringResource(R.string.app_name),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Двусторонняя связь с устройствами",
+                text = stringResource(R.string.main_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -84,8 +88,8 @@ private fun MainScreen() {
 
             ConnectOption(
                 icon = Icons.Filled.Wifi,
-                title = "Wi-Fi (TCP)",
-                subtitle = "Подключение по IP и порту",
+                title = stringResource(R.string.btn_wifi),
+                subtitle = stringResource(R.string.wifi_subtitle),
                 gradient = listOf(
                     MaterialTheme.colorScheme.primary,
                     MaterialTheme.colorScheme.tertiary
@@ -95,8 +99,8 @@ private fun MainScreen() {
 
             ConnectOption(
                 icon = Icons.Filled.Bluetooth,
-                title = "Bluetooth (SPP)",
-                subtitle = "Поиск и подключение к устройству",
+                title = stringResource(R.string.btn_bluetooth),
+                subtitle = stringResource(R.string.bluetooth_subtitle),
                 gradient = listOf(
                     MaterialTheme.colorScheme.secondary,
                     MaterialTheme.colorScheme.primary
@@ -107,7 +111,7 @@ private fun MainScreen() {
             Spacer(Modifier.weight(1f))
 
             Text(
-                text = "MVVM • Coroutines • Material 3",
+                text = stringResource(R.string.main_footer),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth(),
@@ -116,6 +120,7 @@ private fun MainScreen() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConnectOption(
     icon: ImageVector,
@@ -124,13 +129,14 @@ private fun ConnectOption(
     gradient: List<androidx.compose.ui.graphics.Color>,
     onClick: () -> Unit
 ) {
+    // Card(onClick=) даёт ripple, focus и роль Button для TalkBack.
+    // Раньше pointerInput { detectTapGestures } лишал accessibility.
     Card(
+        onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 110.dp)
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onClick() })
-            },
+            .semantics { role = Role.Button },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
