@@ -2,9 +2,14 @@ package com.example.connectapp.utils
 
 import android.content.Context
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -13,10 +18,11 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Пишет сырой поток с устройства в файл `Documents/ConnectApp/session_*.txt`
- * для пост-анализа. Запускается/останавливается флагом, потокобезопасен.
+ * Пишет сырой поток с устройства в файл `externalCacheDir/sessions/session_*.txt`
+ * для пост-анализа. Поделиться через FileProvider — кнопка в Bluetooth-экране.
  *
- * Файл хранится в externalCacheDir (доступен через FileProvider для шаринга).
+ * I/O вынесен на отдельный SupervisorJob + Dispatchers.IO — иначе при потоке
+ * 10-100 пакет/сек blocking-write на UI-потоке заметно лагает интерфейс.
  */
 class SessionRecorder(private val appContext: Context) {
 
@@ -28,15 +34,19 @@ class SessionRecorder(private val appContext: Context) {
 
     @Volatile private var writer: BufferedWriter? = null
     private val lock = Any()
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Открывает файл и переводит recorder в активное состояние. */
     fun start(): File? = synchronized(lock) {
         if (_isRecording.value) return _currentFile.value
-        val dir = File(appContext.externalCacheDir ?: appContext.cacheDir, "sessions").apply { mkdirs() }
+        val dir = File(appContext.externalCacheDir ?: appContext.cacheDir, "sessions")
+            .apply { mkdirs() }
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
         val file = File(dir, "session_$ts.txt")
         runCatching {
             writer = BufferedWriter(FileWriter(file, true))
             writer?.write("# ConnectApp session recording started ${Date()}\n")
+            writer?.flush()
             _currentFile.value = file
             _isRecording.value = true
         }.onFailure {
@@ -46,12 +56,22 @@ class SessionRecorder(private val appContext: Context) {
         return file
     }
 
+    /**
+     * Кладёт чанк в очередь записи. Возвращается мгновенно — запись на IO-потоке.
+     * Безопасно вызывать из любого потока. Если recording не активен — no-op.
+     */
     fun appendChunk(chunk: String) {
         if (!_isRecording.value) return
-        synchronized(lock) {
-            runCatching {
-                writer?.write(chunk)
-                writer?.flush()
+        // Захват текущего writer — снимок для IO-корутины. Если до её
+        // запуска вызовут stop(), writer уже будет закрыт, и runCatching
+        // тихо проглотит IOException.
+        val w = writer ?: return
+        ioScope.launch {
+            synchronized(lock) {
+                runCatching {
+                    w.write(chunk)
+                    w.flush()
+                }
             }
         }
     }
@@ -65,11 +85,16 @@ class SessionRecorder(private val appContext: Context) {
         }
         writer = null
         _isRecording.value = false
-        val finished = _currentFile.value
-        return finished
+        return _currentFile.value
     }
 
-    /** Возвращает content-uri последнего файла для Intent.EXTRA_STREAM. */
+    /** Останавливает scope. Вызывать в onCleared() ViewModel'и. */
+    fun shutdown() {
+        stop()
+        ioScope.cancel()
+    }
+
+    /** Возвращает content-uri для шаринга через Intent.EXTRA_STREAM. */
     fun shareUriFor(file: File) = FileProvider.getUriForFile(
         appContext, "${appContext.packageName}.fileprovider", file
     )

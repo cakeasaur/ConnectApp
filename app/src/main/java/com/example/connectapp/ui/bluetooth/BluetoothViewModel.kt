@@ -16,8 +16,10 @@ import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
 import com.example.connectapp.utils.LogBuffer
 import com.example.connectapp.utils.SessionRecorder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -72,8 +74,9 @@ class BluetoothViewModel(
             repo.incoming.collect { chunk ->
                 logBuffer.appendRaw(chunk, viewModelScope)
                 scheduleSave()
-                recorder.appendChunk(chunk)
-                parseChunk(chunk)
+                recorder.appendChunk(chunk) // уже сам уходит на IO-scope.
+                // Парсер с регэкспами — CPU-bound, не блокируем UI-поток.
+                withContext(Dispatchers.Default) { parseChunk(chunk) }
             }
         }
         // Forward commands posted from GraphActivity (or any other screen).
@@ -169,6 +172,8 @@ class BluetoothViewModel(
         viewModelScope.launch { settingsRepo.setAutoMonitor(value) }
     fun setAutoScrollLog(value: Boolean) =
         viewModelScope.launch { settingsRepo.setAutoScrollLog(value) }
+    fun setDarkTheme(value: Boolean?) =
+        viewModelScope.launch { settingsRepo.setDarkTheme(value) }
 
     private fun scheduleSave() {
         saveLogJob?.cancel()
@@ -222,7 +227,7 @@ class BluetoothViewModel(
         saveLogJob?.cancel()
         logBuffer.flush()
         handle[KEY_LOG] = logBuffer.text.value
-        recorder.stop()
+        recorder.shutdown()
         repo.release()
     }
 
