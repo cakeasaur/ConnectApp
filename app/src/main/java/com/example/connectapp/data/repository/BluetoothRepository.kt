@@ -47,6 +47,10 @@ class BluetoothRepository(
     private val _incoming = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val incoming: SharedFlow<String> = _incoming.asSharedFlow()
 
+    /** Метка времени последнего пакета. Нужно для UI-индикатора «жив ли поток». */
+    private val _lastPacketAt = MutableStateFlow<Long?>(null)
+    val lastPacketAt: StateFlow<Long?> = _lastPacketAt.asStateFlow()
+
     private val _devices = MutableStateFlow<List<BluetoothDeviceItem>>(emptyList())
     val devices: StateFlow<List<BluetoothDeviceItem>> = _devices.asStateFlow()
 
@@ -144,7 +148,10 @@ class BluetoothRepository(
                         attempt = 0 // reset counter on successful connect
 
                         // Blocks until the remote closes or an I/O error occurs.
-                        client.incoming().collect { _incoming.emit(it) }
+                        client.incoming().collect {
+                            _lastPacketAt.value = System.currentTimeMillis()
+                            _incoming.emit(it)
+                        }
 
                     } catch (e: CancellationException) {
                         // Propagate so the outer try-catch can clean up.
