@@ -66,9 +66,8 @@ class WifiRepository(
         }
     }
 
-    suspend fun send(payload: String) {
-        runCatching { client.send(payload) }
-    }
+    /** Возвращает Result, чтобы ViewModel могла показать пользователю ошибку отправки. */
+    suspend fun send(payload: String): Result<Unit> = runCatching { client.send(payload) }
 
     suspend fun disconnect() {
         // Закрываем сокет первым — это разблокирует висящий read() в reader'е.

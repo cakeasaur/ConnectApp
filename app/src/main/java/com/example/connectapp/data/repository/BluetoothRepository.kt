@@ -127,14 +127,16 @@ class BluetoothRepository(
             var wasConnected = false
             try {
                 while (isActive && !intentionalDisconnect) {
-                    // On retry: wait before attempting reconnection.
-                    if (attempt > 0 && wasConnected) {
+                    if (attempt == 0) {
+                        _state.value = ConnectionState.Connecting
+                    } else {
+                        // Сразу отражаем «переподключение», иначе UI висит в Connected
+                        // всё время delay() и пользователь не понимает, что связь упала.
                         _state.value = ConnectionState.Reconnecting(attempt)
                         delay(Constants.RECONNECT_DELAY_MS)
                     }
                     if (!isActive || intentionalDisconnect) break
 
-                    _state.value = ConnectionState.Connecting
                     try {
                         client.connect(a, address)
                         _state.value = ConnectionState.Connected
@@ -173,9 +175,8 @@ class BluetoothRepository(
         }
     }
 
-    suspend fun send(payload: String) {
-        runCatching { client.send(payload) }
-    }
+    /** Возвращает Result, чтобы ViewModel могла показать пользователю ошибку отправки. */
+    suspend fun send(payload: String): Result<Unit> = runCatching { client.send(payload) }
 
     suspend fun disconnect() {
         intentionalDisconnect = true
