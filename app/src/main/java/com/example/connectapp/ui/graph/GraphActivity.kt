@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FileDownload
@@ -46,12 +48,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.connectapp.R
 import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.SensorDataBus
+import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.ui.theme.ConnectAppTheme
 import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
+import com.github.mikephil.charting.formatter.ValueFormatter
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -96,21 +100,34 @@ class GraphActivity : ComponentActivity() {
     }
 
     private fun buildCsv(): String? {
-        val temps = SensorDataBus.tempValues.value
-        val xs = SensorDataBus.accelX.value
-        val ys = SensorDataBus.accelY.value
-        val zs = SensorDataBus.accelZ.value
-        val maxLen = maxOf(temps.size, xs.size, ys.size, zs.size)
-        if (maxLen == 0) return null
+        // Все ряды могут иметь разную длину — сводим по объединённой timeline.
+        val series = listOf(
+            "T1" to SensorDataBus.temp1.value,
+            "T2" to SensorDataBus.temp2.value,
+            "A1X" to SensorDataBus.accel1X.value,
+            "A1Y" to SensorDataBus.accel1Y.value,
+            "A1Z" to SensorDataBus.accel1Z.value,
+            "A2X" to SensorDataBus.accel2X.value,
+            "A2Y" to SensorDataBus.accel2Y.value,
+            "A2Z" to SensorDataBus.accel2Z.value
+        )
+        val allTs = series.flatMap { it.second.map { p -> p.t } }.toSortedSet()
+        if (allTs.isEmpty()) return null
+        val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.ROOT)
+        // Индексируем точки по timestamp для быстрого lookup.
+        val maps = series.map { (_, list) -> list.associateBy { it.t } }
         return buildString {
-            appendLine("Index,Temperature (C),Accel X,Accel Y,Accel Z")
-            for (i in 0 until maxLen) {
-                // Locale.ROOT — иначе RU-локаль вставит «28,50» и колонки CSV развалятся.
-                val t = temps.getOrNull(i)?.let { "%.2f".format(Locale.ROOT, it) } ?: ""
-                val x = xs.getOrNull(i)?.let { "%.0f".format(Locale.ROOT, it) } ?: ""
-                val y = ys.getOrNull(i)?.let { "%.0f".format(Locale.ROOT, it) } ?: ""
-                val z = zs.getOrNull(i)?.let { "%.0f".format(Locale.ROOT, it) } ?: ""
-                appendLine("$i,$t,$x,$y,$z")
+            append("Timestamp,")
+            append(series.joinToString(",") { it.first })
+            append('\n')
+            for (t in allTs) {
+                append(iso.format(Date(t))); append(',')
+                for ((i, _) in series.withIndex()) {
+                    val v = maps[i][t]?.value
+                    if (v != null) append(String.format(Locale.ROOT, "%.3f", v))
+                    if (i != series.lastIndex) append(',')
+                }
+                append('\n')
             }
         }
     }
@@ -119,10 +136,14 @@ class GraphActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
-    val temps by SensorDataBus.tempValues.collectAsStateWithLifecycle()
-    val xs by SensorDataBus.accelX.collectAsStateWithLifecycle()
-    val ys by SensorDataBus.accelY.collectAsStateWithLifecycle()
-    val zs by SensorDataBus.accelZ.collectAsStateWithLifecycle()
+    val temp1 by SensorDataBus.temp1.collectAsStateWithLifecycle()
+    val temp2 by SensorDataBus.temp2.collectAsStateWithLifecycle()
+    val a1x by SensorDataBus.accel1X.collectAsStateWithLifecycle()
+    val a1y by SensorDataBus.accel1Y.collectAsStateWithLifecycle()
+    val a1z by SensorDataBus.accel1Z.collectAsStateWithLifecycle()
+    val a2x by SensorDataBus.accel2X.collectAsStateWithLifecycle()
+    val a2y by SensorDataBus.accel2Y.collectAsStateWithLifecycle()
+    val a2z by SensorDataBus.accel2Z.collectAsStateWithLifecycle()
     var monitoring by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -149,14 +170,14 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Управление: запросы по команде + переключатель monitor
+            val cmdTemp = stringResource(R.string.cmd_temp)
+            val cmdAccel = stringResource(R.string.cmd_accel)
+            val cmdMonitor = stringResource(R.string.cmd_monitor)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val cmdTemp = stringResource(R.string.cmd_temp)
-                val cmdAccel = stringResource(R.string.cmd_accel)
-                val cmdMonitor = stringResource(R.string.cmd_monitor)
                 FilledTonalButton(
                     onClick = { CommandBus.send(cmdTemp) },
                     modifier = Modifier.weight(1f)
@@ -182,16 +203,37 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
             }
 
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
+            TempStatsRow("T1", temp1)
+            TempStatsRow("T2", temp2)
             ChartCard {
-                TemperatureChart(values = temps)
+                TwoLineTempChart(temp1 = temp1, temp2 = temp2)
             }
 
-            Text(stringResource(R.string.label_accelerometer), style = MaterialTheme.typography.titleLarge)
+            Text("${stringResource(R.string.label_accelerometer)} 1", style = MaterialTheme.typography.titleLarge)
             ChartCard {
-                AccelChart(xs = xs, ys = ys, zs = zs)
+                AccelChart(xs = a1x, ys = a1y, zs = a1z, hintRes = R.string.graph_accel_hint)
+            }
+
+            Text("${stringResource(R.string.label_accelerometer)} 2", style = MaterialTheme.typography.titleLarge)
+            ChartCard {
+                AccelChart(xs = a2x, ys = a2y, zs = a2z, hintRes = R.string.graph_accel_hint)
             }
         }
     }
+}
+
+@Composable
+private fun TempStatsRow(label: String, points: List<TimedPoint>) {
+    if (points.isEmpty()) return
+    val values = points.map { it.value }
+    val mn = values.min()
+    val mx = values.max()
+    val avg = values.average()
+    Text(
+        "$label: min %.2f / avg %.2f / max %.2f °C".format(Locale.ROOT, mn, avg, mx),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable
@@ -207,94 +249,76 @@ private fun ChartCard(content: @Composable () -> Unit) {
     }
 }
 
+private class TimeAxisFormatter : ValueFormatter() {
+    private val fmt = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
+    override fun getFormattedValue(value: Float): String = fmt.format(Date(value.toLong()))
+}
+
+private fun configureChart(chart: LineChart, noDataText: String) {
+    chart.description.isEnabled = false
+    chart.setNoDataText(noDataText)
+    chart.setNoDataTextColor(Color.GRAY)
+    chart.setTouchEnabled(true)
+    chart.isDragEnabled = true
+    chart.setScaleEnabled(true)
+    chart.setPinchZoom(true)
+    chart.setDrawGridBackground(false)
+    chart.xAxis.position = XAxis.XAxisPosition.BOTTOM
+    chart.xAxis.setDrawGridLines(true)
+    chart.xAxis.valueFormatter = TimeAxisFormatter()
+    // labelCount=4 не даёт меткам слипнуться при компактном экране.
+    chart.xAxis.setLabelCount(4, true)
+    chart.axisLeft.setDrawGridLines(true)
+    chart.axisRight.isEnabled = false
+    chart.legend.isEnabled = true
+}
+
+private fun makeSet(points: List<TimedPoint>, label: String, color: Int): LineDataSet {
+    val entries = points.map { Entry(it.t.toFloat(), it.value) }
+    return LineDataSet(entries, label).apply {
+        this.color = color
+        setCircleColor(color)
+        lineWidth = 2f
+        circleRadius = 2f
+        setDrawCircleHole(false)
+        setDrawValues(false)
+        mode = LineDataSet.Mode.CUBIC_BEZIER
+    }
+}
+
 @Composable
-private fun TemperatureChart(values: List<Float>) {
+private fun TwoLineTempChart(temp1: List<TimedPoint>, temp2: List<TimedPoint>) {
     val noDataText = stringResource(R.string.graph_temp_hint)
     AndroidView(
         modifier = Modifier.fillMaxSize(),
-        factory = { ctx ->
-            LineChart(ctx).apply {
-                description.isEnabled = false
-                setNoDataText(noDataText)
-                setNoDataTextColor(Color.GRAY)
-                setTouchEnabled(true)
-                isDragEnabled = true
-                setScaleEnabled(true)
-                setPinchZoom(true)
-                setDrawGridBackground(false)
-                xAxis.apply {
-                    position = XAxis.XAxisPosition.BOTTOM
-                    setDrawGridLines(true)
-                    granularity = 1f
-                }
-                axisLeft.setDrawGridLines(true)
-                axisRight.isEnabled = false
-                legend.isEnabled = true
-            }
-        },
+        factory = { ctx -> LineChart(ctx).also { configureChart(it, noDataText) } },
         update = { chart ->
-            if (values.isEmpty()) {
-                chart.clear()
-                chart.invalidate()
-                return@AndroidView
+            if (temp1.isEmpty() && temp2.isEmpty()) {
+                chart.clear(); chart.invalidate(); return@AndroidView
             }
-            val entries = values.mapIndexed { i, v -> Entry(i.toFloat(), v) }
-            val set = LineDataSet(entries, "Температура °C").apply {
-                color = Color.rgb(220, 50, 50)
-                setCircleColor(Color.rgb(220, 50, 50))
-                lineWidth = 2f
-                circleRadius = 3f
-                setDrawCircleHole(false)
-                setDrawValues(false)
-                mode = LineDataSet.Mode.CUBIC_BEZIER
-            }
-            chart.data = LineData(set)
+            val sets = mutableListOf<LineDataSet>()
+            if (temp1.isNotEmpty()) sets += makeSet(temp1, "T1", Color.rgb(220, 50, 50))
+            if (temp2.isNotEmpty()) sets += makeSet(temp2, "T2", Color.rgb(50, 100, 220))
+            chart.data = LineData(sets.toList<LineDataSet>())
             chart.invalidate()
         }
     )
 }
 
 @Composable
-private fun AccelChart(xs: List<Float>, ys: List<Float>, zs: List<Float>) {
-    val noDataText = stringResource(R.string.graph_accel_hint)
+private fun AccelChart(
+    xs: List<TimedPoint>,
+    ys: List<TimedPoint>,
+    zs: List<TimedPoint>,
+    hintRes: Int
+) {
+    val noDataText = stringResource(hintRes)
     AndroidView(
         modifier = Modifier.fillMaxSize(),
-        factory = { ctx ->
-            LineChart(ctx).apply {
-                description.isEnabled = false
-                setNoDataText(noDataText)
-                setNoDataTextColor(Color.GRAY)
-                setTouchEnabled(true)
-                isDragEnabled = true
-                setScaleEnabled(true)
-                setPinchZoom(true)
-                setDrawGridBackground(false)
-                xAxis.apply {
-                    position = XAxis.XAxisPosition.BOTTOM
-                    setDrawGridLines(true)
-                    granularity = 1f
-                }
-                axisLeft.setDrawGridLines(true)
-                axisRight.isEnabled = false
-                legend.isEnabled = true
-            }
-        },
+        factory = { ctx -> LineChart(ctx).also { configureChart(it, noDataText) } },
         update = { chart ->
             if (xs.isEmpty() && ys.isEmpty() && zs.isEmpty()) {
-                chart.clear()
-                chart.invalidate()
-                return@AndroidView
-            }
-            fun makeSet(values: List<Float>, label: String, color: Int) = LineDataSet(
-                values.mapIndexed { i, v -> Entry(i.toFloat(), v) }, label
-            ).apply {
-                this.color = color
-                setCircleColor(color)
-                lineWidth = 2f
-                circleRadius = 3f
-                setDrawCircleHole(false)
-                setDrawValues(false)
-                mode = LineDataSet.Mode.CUBIC_BEZIER
+                chart.clear(); chart.invalidate(); return@AndroidView
             }
             chart.data = LineData(
                 makeSet(xs, "X", Color.rgb(220, 50, 50)),
