@@ -60,7 +60,11 @@ class WifiViewModel(
     fun send(payload: String) {
         // Echo outgoing message to log so user can see what they sent.
         appendLog("→ $payload\n")
-        viewModelScope.launch { repo.send(payload) }
+        viewModelScope.launch {
+            repo.send(payload).onFailure { e ->
+                appendLog("← [ERROR] ${e.message ?: "send failed"}\n")
+            }
+        }
     }
 
     fun clearLog() {

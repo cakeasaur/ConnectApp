@@ -84,12 +84,21 @@ class BluetoothViewModel(
     /** Send a message and echo it to the log (user-initiated). */
     fun send(payload: String) {
         appendLog("→ $payload\n")
-        viewModelScope.launch { repo.send(payload) }
+        viewModelScope.launch {
+            repo.send(payload).onFailure { e ->
+                appendLog("← [ERROR] ${e.message ?: "send failed"}\n")
+            }
+        }
     }
 
     /** Send without logging — used for silent auto-poll requests. */
     private fun sendSilent(payload: String) {
-        viewModelScope.launch { repo.send(payload) }
+        viewModelScope.launch {
+            repo.send(payload).onFailure { e ->
+                // Авто-опрос: ошибки помечаем явно, чтобы было ясно что не дошло.
+                appendLog("← [ERROR] auto-poll: ${e.message ?: "send failed"}\n")
+            }
+        }
     }
 
     fun clearLog() {
