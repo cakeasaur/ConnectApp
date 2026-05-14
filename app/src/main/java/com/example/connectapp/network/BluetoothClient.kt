@@ -23,8 +23,11 @@ import java.nio.charset.StandardCharsets
  */
 class BluetoothClient {
 
-    private var socket: BluetoothSocket? = null
-    private var output: OutputStream? = null
+    // @Volatile: socket/output читаются из incoming/send/close, которые могут
+    // выполняться на разных потоках Dispatchers.IO. Без volatile — гонка чтения
+    // stale-ссылки на уже закрытый сокет.
+    @Volatile private var socket: BluetoothSocket? = null
+    @Volatile private var output: OutputStream? = null
 
     // Serialises concurrent send() calls — without this, bytes from
     // overlapping commands ("temp" + "status") can interleave on the wire.
@@ -80,13 +83,12 @@ class BluetoothClient {
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
         // Mutex prevents concurrent writes from interleaving at the byte level.
         sendMutex.withLock {
-            output?.apply {
-                // Append newline if missing — most devices (HC-05, ESP32, Arduino)
-                // expect line-delimited messages.
-                val msg = if (payload.endsWith("\n")) payload else "$payload\n"
-                write(msg.toByteArray(StandardCharsets.UTF_8))
-                flush()
-            }
+            val out = output ?: throw IllegalStateException("Bluetooth socket is not connected")
+            // Append newline if missing — most devices (HC-05, ESP32, Arduino)
+            // expect line-delimited messages.
+            val msg = if (payload.endsWith("\n")) payload else "$payload\n"
+            out.write(msg.toByteArray(StandardCharsets.UTF_8))
+            out.flush()
         }
     }
 

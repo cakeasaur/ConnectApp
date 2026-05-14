@@ -22,8 +22,10 @@ import java.nio.charset.StandardCharsets
  */
 class WifiClient {
 
-    private var socket: Socket? = null
-    private var output: OutputStream? = null
+    // @Volatile: эти поля читаются/пишутся из разных корутин (connect/send/close/incoming),
+    // которые могут попадать в разные потоки Dispatchers.IO.
+    @Volatile private var socket: Socket? = null
+    @Volatile private var output: OutputStream? = null
 
     // Serialises concurrent send() calls — without this, bytes from
     // overlapping commands can interleave on the wire.
@@ -33,6 +35,11 @@ class WifiClient {
     suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
         val s = Socket()
         s.connect(InetSocketAddress(host, port), Constants.SOCKET_TIMEOUT_MS)
+        // SO_TIMEOUT: без этого read() висит бесконечно при «чёрной дыре» (NAT-таймаут,
+        // отключённый Wi-Fi без RST). С таймаутом получим SocketTimeoutException
+        // → репозиторий пометит соединение как разорванное и (для BT) попробует переподключиться.
+        s.soTimeout = Constants.SOCKET_TIMEOUT_MS
+        s.keepAlive = true
         socket = s
         output = s.getOutputStream()
     }
@@ -54,7 +61,7 @@ class WifiClient {
                 if (read > 0) trySend(String(buffer, 0, read, StandardCharsets.UTF_8))
             }
         } catch (_: Throwable) {
-            // Channel close path below propagates
+            // Любая I/O-ошибка (включая SocketTimeoutException) — для нас разрыв.
         } finally {
             close()
         }
@@ -64,13 +71,12 @@ class WifiClient {
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
         // Mutex prevents concurrent writes from interleaving at the byte level.
         sendMutex.withLock {
-            output?.apply {
-                // Append newline if missing — most devices (HC-05, ESP32, Arduino)
-                // expect line-delimited messages.
-                val msg = if (payload.endsWith("\n")) payload else "$payload\n"
-                write(msg.toByteArray(StandardCharsets.UTF_8))
-                flush()
-            }
+            val out = output ?: throw IllegalStateException("Socket is not connected")
+            // Append newline if missing — most devices (HC-05, ESP32, Arduino)
+            // expect line-delimited messages.
+            val msg = if (payload.endsWith("\n")) payload else "$payload\n"
+            out.write(msg.toByteArray(StandardCharsets.UTF_8))
+            out.flush()
         }
     }
 
@@ -81,5 +87,5 @@ class WifiClient {
         socket = null
     }
 
-    fun isConnected(): Boolean = socket?.isConnected == true && socket?.isClosed == false
+    fun isConnected(): Boolean = socket?.let { it.isConnected && !it.isClosed } == true
 }
