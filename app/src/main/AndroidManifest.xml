@@ -20,9 +20,13 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
 
-    <!-- Location: required for BT scan on API < 31 -->
+    <!-- Location: required for BT scan on API < 31. На API 31+ не запрашиваем благодаря
+         neverForLocation. COARSE рядом с FINE — требование lint (CoarseFineLocation). -->
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="30" />
 
     <uses-feature
