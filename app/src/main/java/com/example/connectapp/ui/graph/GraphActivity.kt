@@ -297,11 +297,13 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         lineSpec(lineColor = androidx.compose.ui.graphics.Color(argb))
     }
 
-    // X-ось → HH:mm:ss относительно baseMs.
+    // X-ось → mm:ss относительно baseMs. Короче чем HH:mm:ss и поэтому не
+    // обрезается до '15...' на узких метках. HH здесь не критично — пользователь
+    // смотрит на относительное время монитор-сессии, не на абсолютное.
     val timeFmt = remember(baseMs) {
         AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
             if (baseMs == 0L) ""
-            else SimpleDateFormat("HH:mm:ss", Locale.ROOT)
+            else SimpleDateFormat("mm:ss", Locale.ROOT)
                 .format(Date(baseMs + (value * 1000f).toLong()))
         }
     }
