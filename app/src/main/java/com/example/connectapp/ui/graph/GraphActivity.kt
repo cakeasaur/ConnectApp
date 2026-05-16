@@ -44,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -201,6 +202,9 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
     var monitoring by remember { mutableStateOf(false) }
     var paused by remember { mutableStateOf(false) }
     var window by remember { mutableStateOf(TimeWindow.ALL) }
+    // Shared crosshair-state — тап на любом из 3 line charts двигает линию
+    // во ВСЕХ. Объект (не StateFlow) держит Long? state без боксинга.
+    val crosshair = remember { CrosshairBus() }
 
     // 1) Freeze: при paused = true возвращаем снимок, снятый в момент перехода.
     val temp1Snap = snapshotWhen(paused, temp1Live)
@@ -319,17 +323,43 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
             TempStatsRow("T1", temp1)
             TempStatsRow("T2", temp2)
             ChartCard {
-                VicoLineChart(series = listOf(temp1, temp2).filter { it.isNotEmpty() })
+                ChartWithCrosshair(
+                    seriesData = listOf(
+                        Triple(temp1, Color(0xFFDC3232), "T1"),
+                        Triple(temp2, Color(0xFF3264DC), "T2"),
+                    ),
+                    bus = crosshair
+                ) {
+                    VicoLineChart(series = listOf(temp1, temp2).filter { it.isNotEmpty() })
+                }
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 1", style = MaterialTheme.typography.titleLarge)
             ChartCard {
-                VicoLineChart(series = listOf(a1x, a1y, a1z).filter { it.isNotEmpty() })
+                ChartWithCrosshair(
+                    seriesData = listOf(
+                        Triple(a1x, Color(0xFFDC3232), "ax"),
+                        Triple(a1y, Color(0xFF32B432), "ay"),
+                        Triple(a1z, Color(0xFF3264DC), "az"),
+                    ),
+                    bus = crosshair
+                ) {
+                    VicoLineChart(series = listOf(a1x, a1y, a1z).filter { it.isNotEmpty() })
+                }
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 2", style = MaterialTheme.typography.titleLarge)
             ChartCard {
-                VicoLineChart(series = listOf(a2x, a2y, a2z).filter { it.isNotEmpty() })
+                ChartWithCrosshair(
+                    seriesData = listOf(
+                        Triple(a2x, Color(0xFFDC3232), "ax"),
+                        Triple(a2y, Color(0xFF32B432), "ay"),
+                        Triple(a2z, Color(0xFF3264DC), "az"),
+                    ),
+                    bus = crosshair
+                ) {
+                    VicoLineChart(series = listOf(a2x, a2y, a2z).filter { it.isNotEmpty() })
+                }
             }
 
             Text("3D облако акселерометров", style = MaterialTheme.typography.titleLarge)
