@@ -1,12 +1,12 @@
 package com.example.connectapp.ui.graph
 
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,13 +35,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,12 +50,12 @@ import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.ui.theme.AppThemeWithSettings
-import com.github.mikephil.charting.charts.LineChart
-import com.github.mikephil.charting.components.XAxis
-import com.github.mikephil.charting.data.Entry
-import com.github.mikephil.charting.data.LineData
-import com.github.mikephil.charting.data.LineDataSet
-import com.github.mikephil.charting.formatter.ValueFormatter
+import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
+import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
+import com.patrykandpatrick.vico.compose.chart.Chart
+import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
+import com.patrykandpatrick.vico.core.entry.entryOf
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -81,7 +81,6 @@ class GraphActivity : ComponentActivity() {
             Toast.makeText(this, getString(R.string.graph_no_export_data), Toast.LENGTH_SHORT).show()
             return
         }
-        // Чистим старые экспорты, чтобы cacheDir не пух (ОС подчистит сам, но лучше явно).
         runCatching {
             cacheDir.listFiles { f -> f.name.startsWith("sensor_data_") && f.name.endsWith(".csv") }
                 ?.forEach { it.delete() }
@@ -100,7 +99,6 @@ class GraphActivity : ComponentActivity() {
     }
 
     private fun buildCsv(): String? {
-        // Все ряды могут иметь разную длину — сводим по объединённой timeline.
         val series = listOf(
             "T1" to SensorDataBus.temp1.value,
             "T2" to SensorDataBus.temp2.value,
@@ -114,12 +112,9 @@ class GraphActivity : ComponentActivity() {
         val allTs = series.flatMap { it.second.map { p -> p.t } }.toSortedSet()
         if (allTs.isEmpty()) return null
         val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.ROOT)
-        // Индексируем точки по timestamp для быстрого lookup.
         val maps = series.map { (_, list) -> list.associateBy { it.t } }
         return buildString {
-            append("Timestamp,")
-            append(series.joinToString(",") { it.first })
-            append('\n')
+            append("Timestamp,"); append(series.joinToString(",") { it.first }); append('\n')
             for (t in allTs) {
                 append(iso.format(Date(t))); append(',')
                 for ((i, _) in series.withIndex()) {
@@ -174,10 +169,6 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Команды под прошивку PIC24FJ128GB106:
-            //   "1" — Start enhanced monitoring (плата начнёт лить CSV)
-            //   "2" — Calibrate accelerometers
-            //   "3" — Quick test
             val cmdStart = stringResource(R.string.cmd_one)
             val cmdCalib = stringResource(R.string.cmd_two)
             val cmdQuick = stringResource(R.string.cmd_three)
@@ -210,17 +201,31 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
             TempStatsRow("T1", temp1)
             TempStatsRow("T2", temp2)
             ChartCard {
-                TwoLineTempChart(temp1 = temp1, temp2 = temp2)
+                VicoLineChart(series = listOf(temp1, temp2).filter { it.isNotEmpty() })
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 1", style = MaterialTheme.typography.titleLarge)
             ChartCard {
-                AccelChart(xs = a1x, ys = a1y, zs = a1z, hintRes = R.string.graph_accel_hint)
+                VicoLineChart(series = listOf(a1x, a1y, a1z).filter { it.isNotEmpty() })
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 2", style = MaterialTheme.typography.titleLarge)
             ChartCard {
-                AccelChart(xs = a2x, ys = a2y, zs = a2z, hintRes = R.string.graph_accel_hint)
+                VicoLineChart(series = listOf(a2x, a2y, a2z).filter { it.isNotEmpty() })
+            }
+
+            Text("3D облако акселерометров", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "A1 красным, A2 синим. Перетаскивай — вращай, pinch — зум.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            ChartCard(height = 320) {
+                Accel3DChart(
+                    a1 = AccelTriple(a1x, a1y, a1z),
+                    a2 = AccelTriple(a2x, a2y, a2z),
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
     }
@@ -230,9 +235,7 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
 private fun TempStatsRow(label: String, points: List<TimedPoint>) {
     if (points.isEmpty()) return
     val values = points.map { it.value }
-    val mn = values.min()
-    val mx = values.max()
-    val avg = values.average()
+    val mn = values.min(); val mx = values.max(); val avg = values.average()
     Text(
         "$label: min %.2f / avg %.2f / max %.2f °C".format(Locale.ROOT, mn, avg, mx),
         style = MaterialTheme.typography.bodyMedium,
@@ -241,116 +244,46 @@ private fun TempStatsRow(label: String, points: List<TimedPoint>) {
 }
 
 @Composable
-private fun ChartCard(content: @Composable () -> Unit) {
+private fun ChartCard(height: Int = 220, content: @Composable () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .height(220.dp)
+            .height(height.dp)
     ) {
-        androidx.compose.foundation.layout.Box(Modifier.padding(8.dp)) { content() }
+        Box(Modifier.padding(8.dp)) { content() }
     }
 }
 
 /**
- * X-ось — секунды относительно [baseMs] (timestamp первой точки).
- * Раньше брали абсолютный millis-timestamp и кастили в Float — но Float
- * хранит только ~7 значащих цифр, а ms-timestamp 13. Все точки в одной
- * секунде округлялись в одну координату X и график «сжимался» в линию.
+ * Линейный график на Vico 1.14. Принимает 1..N серий TimedPoint, X-ось = секунды
+ * с момента первой точки (Float не вмещает абсолютные 13-значные ms-timestamps).
  */
-private class RelativeTimeFormatter(private val baseMs: Long) : ValueFormatter() {
-    private val fmt = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
-    override fun getFormattedValue(value: Float): String =
-        fmt.format(Date(baseMs + (value * 1000f).toLong()))
-}
+@Composable
+private fun VicoLineChart(series: List<List<TimedPoint>>) {
+    val producer = remember { ChartEntryModelProducer() }
 
-private fun configureChart(chart: LineChart, noDataText: String) {
-    chart.description.isEnabled = false
-    chart.setNoDataText(noDataText)
-    chart.setNoDataTextColor(Color.GRAY)
-    chart.setTouchEnabled(true)
-    chart.isDragEnabled = true
-    chart.setScaleEnabled(true)
-    chart.setPinchZoom(true)
-    chart.setDrawGridBackground(false)
-    chart.xAxis.position = XAxis.XAxisPosition.BOTTOM
-    chart.xAxis.setDrawGridLines(true)
-    // valueFormatter поставим в update() — там известен baseMs.
-    chart.xAxis.setLabelCount(4, true)
-    chart.axisLeft.setDrawGridLines(true)
-    chart.axisRight.isEnabled = false
-    chart.legend.isEnabled = true
-}
-
-/**
- * X = (точка.t - baseMs) / 1000  — секунды относительно начала наблюдения.
- * Так Float-точность не теряется (для 10-минутного окна нужно всего ~3 знака).
- */
-private fun makeSet(points: List<TimedPoint>, baseMs: Long, label: String, color: Int): LineDataSet {
-    val entries = points.map { Entry((it.t - baseMs).toFloat() / 1000f, it.value) }
-    return LineDataSet(entries, label).apply {
-        this.color = color
-        setCircleColor(color)
-        lineWidth = 2f
-        circleRadius = 2f
-        setDrawCircleHole(false)
-        setDrawValues(false)
-        mode = LineDataSet.Mode.CUBIC_BEZIER
+    LaunchedEffect(series) {
+        if (series.isEmpty() || series.all { it.isEmpty() }) {
+            producer.setEntries(emptyList<List<com.patrykandpatrick.vico.core.entry.ChartEntry>>())
+            return@LaunchedEffect
+        }
+        val baseMs = series.flatten().minOf { it.t }
+        // Каждая серия → отдельный List<ChartEntry>. Vico рисует их разными линиями.
+        val seriesEntries = series
+            .filter { it.isNotEmpty() }
+            .map { points ->
+                points.map { entryOf((it.t - baseMs).toFloat() / 1000f, it.value) }
+            }
+        producer.setEntries(seriesEntries)
     }
-}
 
-@Composable
-private fun TwoLineTempChart(temp1: List<TimedPoint>, temp2: List<TimedPoint>) {
-    val noDataText = stringResource(R.string.graph_temp_hint)
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { ctx -> LineChart(ctx).also { configureChart(it, noDataText) } },
-        update = { chart ->
-            if (temp1.isEmpty() && temp2.isEmpty()) {
-                chart.clear(); chart.invalidate(); return@AndroidView
-            }
-            val baseMs = minOf(
-                temp1.firstOrNull()?.t ?: Long.MAX_VALUE,
-                temp2.firstOrNull()?.t ?: Long.MAX_VALUE
-            )
-            chart.xAxis.valueFormatter = RelativeTimeFormatter(baseMs)
-            val sets = mutableListOf<LineDataSet>()
-            if (temp1.isNotEmpty()) sets += makeSet(temp1, baseMs, "T1", Color.rgb(220, 50, 50))
-            if (temp2.isNotEmpty()) sets += makeSet(temp2, baseMs, "T2", Color.rgb(50, 100, 220))
-            chart.data = LineData(sets.toList<LineDataSet>())
-            chart.invalidate()
-        }
-    )
-}
-
-@Composable
-private fun AccelChart(
-    xs: List<TimedPoint>,
-    ys: List<TimedPoint>,
-    zs: List<TimedPoint>,
-    hintRes: Int
-) {
-    val noDataText = stringResource(hintRes)
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { ctx -> LineChart(ctx).also { configureChart(it, noDataText) } },
-        update = { chart ->
-            if (xs.isEmpty() && ys.isEmpty() && zs.isEmpty()) {
-                chart.clear(); chart.invalidate(); return@AndroidView
-            }
-            val baseMs = minOf(
-                xs.firstOrNull()?.t ?: Long.MAX_VALUE,
-                ys.firstOrNull()?.t ?: Long.MAX_VALUE,
-                zs.firstOrNull()?.t ?: Long.MAX_VALUE
-            )
-            chart.xAxis.valueFormatter = RelativeTimeFormatter(baseMs)
-            chart.data = LineData(
-                makeSet(xs, baseMs, "X", Color.rgb(220, 50, 50)),
-                makeSet(ys, baseMs, "Y", Color.rgb(50, 180, 50)),
-                makeSet(zs, baseMs, "Z", Color.rgb(50, 100, 220))
-            )
-            chart.invalidate()
-        }
+    Chart(
+        chart = lineChart(),
+        chartModelProducer = producer,
+        startAxis = rememberStartAxis(),
+        bottomAxis = rememberBottomAxis(),
+        modifier = Modifier.fillMaxSize()
     )
 }

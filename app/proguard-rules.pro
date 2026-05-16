@@ -6,9 +6,8 @@
 -dontwarn kotlinx.coroutines.flow.**
 -dontwarn kotlinx.coroutines.debug.**
 
-# --- MPAndroidChart использует рефлексию для Animator/Easing/IDataSet ---
--keep class com.github.mikephil.charting.** { *; }
--dontwarn com.github.mikephil.charting.**
+# --- Vico (Compose chart) — обычно не нуждается в keep, но на всякий случай ---
+-dontwarn com.patrykandpatrick.vico.**
 
 # --- AndroidX FileProvider (используется в GraphActivity для CSV) ---
 -keep class androidx.core.content.FileProvider { *; }
