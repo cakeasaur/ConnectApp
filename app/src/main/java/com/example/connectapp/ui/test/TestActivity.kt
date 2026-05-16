@@ -71,6 +71,13 @@ class TestActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Если пришли из HistoryActivity с replay-extra — переключаем VM в
+        // file-source режим вместо mock-генератора и сразу стартуем поток.
+        val replayPath = intent?.getStringExtra(EXTRA_REPLAY_FILE)
+        if (!replayPath.isNullOrBlank()) {
+            viewModel.replayFile = java.io.File(replayPath)
+            viewModel.start()
+        }
         setContent {
             AppThemeWithSettings {
                 TestScreen(
@@ -80,6 +87,11 @@ class TestActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    companion object {
+        /** Полный путь к session-файлу для replay-режима (опционально). */
+        const val EXTRA_REPLAY_FILE = "replay_file"
     }
 }
 

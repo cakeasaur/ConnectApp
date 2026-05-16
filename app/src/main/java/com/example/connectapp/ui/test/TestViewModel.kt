@@ -6,17 +6,19 @@ import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.utils.DataParser
+import com.example.connectapp.utils.FileReplaySource
 import com.example.connectapp.utils.LogBuffer
 import com.example.connectapp.utils.MockDataSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * VM для тестового режима — те же модели данных что и Bluetooth, но источник —
@@ -41,6 +43,13 @@ class TestViewModel(
     private val lineBuffer = StringBuilder()
     private var streamJob: Job? = null
 
+    /**
+     * Опциональный файл для replay-режима. Если установлен — start() будет
+     * читать из файла, иначе генерит mock-данные через MockDataSource.
+     * Устанавливается из Activity при получении intent-extra `replay_file`.
+     */
+    @Volatile var replayFile: File? = null
+
     fun toggle() {
         if (_running.value) stop() else start()
     }
@@ -54,12 +63,17 @@ class TestViewModel(
         lineBuffer.clear()
         _sensorData.value = SensorData()
         _running.value = true
+        // Выбор источника: replay-файл или mock-генератор.
+        val source: Flow<String> = replayFile?.let { FileReplaySource.stream(it) }
+            ?: MockDataSource.stream()
         streamJob = viewModelScope.launch {
-            MockDataSource.stream().collect { chunk ->
+            source.collect { chunk ->
                 logBuffer.appendRaw(chunk, viewModelScope)
                 _lastPacketAt.value = System.currentTimeMillis()
                 withContext(Dispatchers.Default) { parseChunk(chunk) }
             }
+            // Replay завершился (файл кончился) — переводим в stopped.
+            _running.value = false
         }
     }
 

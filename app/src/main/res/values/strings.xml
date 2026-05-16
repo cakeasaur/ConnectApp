@@ -114,6 +114,17 @@
     <string name="cmd_two" translatable="false">2</string>
     <string name="cmd_three" translatable="false">3</string>
 
+    <!-- История записей -->
+    <string name="history_title">Записанные сессии</string>
+    <string name="history_subtitle">Сохранённые дампы потока — просмотр, replay, share</string>
+    <string name="history_empty">Нет сохранённых сессий. Нажми REC во время подключения, чтобы записать.</string>
+    <string name="history_replay">Воспроизвести</string>
+    <string name="history_share">Поделиться</string>
+    <string name="history_delete">Удалить</string>
+    <string name="history_delete_title">Удалить запись?</string>
+    <string name="history_delete_msg">%1$s будет удалена безвозвратно.</string>
+    <string name="btn_history">История записей</string>
+
     <!-- Foreground service notification -->
     <string name="fg_default_title">Соединение активно</string>
     <string name="fg_channel_name">Активные соединения</string>
