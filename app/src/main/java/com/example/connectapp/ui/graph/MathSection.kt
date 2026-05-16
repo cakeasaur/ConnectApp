@@ -100,6 +100,12 @@ fun MathSection(
     )
     OrbitTripletCard(a1x = a1x, a1y = a1y, a2x = a2x, a2y = a2y)
 
+    Text(
+        "Phosphor persistence (CRT-стиль osc)",
+        style = MaterialTheme.typography.titleMedium
+    )
+    PersistenceCard(series = a1x, generation = generation)
+
     Text("Cross-correlation ax1 ↔ ax2", style = MaterialTheme.typography.titleMedium)
     CrossCorrCard(a1x, a2x)
 
