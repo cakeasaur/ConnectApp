@@ -54,6 +54,11 @@ import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.compose.chart.line.lineSpec
+import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
+import com.patrykandpatrick.vico.core.axis.AxisPosition
+import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
+import com.patrykandpatrick.vico.core.entry.ChartEntry
 import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
 import com.patrykandpatrick.vico.core.entry.entryOf
 import java.io.File
@@ -259,31 +264,67 @@ private fun ChartCard(height: Int = 220, content: @Composable () -> Unit) {
 /**
  * Линейный график на Vico 1.14. Принимает 1..N серий TimedPoint, X-ось = секунды
  * с момента первой точки (Float не вмещает абсолютные 13-значные ms-timestamps).
+ *
+ * Особенности:
+ *  - bottomAxis форматирует X как HH:mm:ss относительно [baseMs] (хранится в state).
+ *  - lineColors задают цвета серий: T1/A1=красный, T2/A2=зелёный, A1Z/A2Z=синий.
+ *    Для 1 серии — primary, для 2 — red+blue (термометры), для 3 — RGB (X/Y/Z).
  */
 @Composable
 private fun VicoLineChart(series: List<List<TimedPoint>>) {
     val producer = remember { ChartEntryModelProducer() }
+    // baseMs нужен и в LaunchedEffect (нормализация X), и в AxisValueFormatter
+    // (обратный перевод в HH:mm:ss). Держим в state, обновляем при смене данных.
+    var baseMs by remember { mutableStateOf(0L) }
 
     LaunchedEffect(series) {
-        if (series.isEmpty() || series.all { it.isEmpty() }) {
-            producer.setEntries(emptyList<List<com.patrykandpatrick.vico.core.entry.ChartEntry>>())
+        val nonEmpty = series.filter { it.isNotEmpty() }
+        if (nonEmpty.isEmpty()) {
+            producer.setEntries(emptyList<List<ChartEntry>>())
             return@LaunchedEffect
         }
-        val baseMs = series.flatten().minOf { it.t }
-        // Каждая серия → отдельный List<ChartEntry>. Vico рисует их разными линиями.
-        val seriesEntries = series
-            .filter { it.isNotEmpty() }
-            .map { points ->
-                points.map { entryOf((it.t - baseMs).toFloat() / 1000f, it.value) }
-            }
+        baseMs = nonEmpty.flatten().minOf { it.t }
+        val seriesEntries = nonEmpty.map { points ->
+            points.map { entryOf((it.t - baseMs).toFloat() / 1000f, it.value) }
+        }
         producer.setEntries(seriesEntries)
     }
 
+    // Цвета на серии: T-графика 2 серии (красный/синий), Accel 3 серии (красный/зелёный/синий).
+    val seriesColors = when (series.count { it.isNotEmpty() }) {
+        0, 1 -> listOf(android.graphics.Color.rgb(220, 50, 50))
+        2 -> listOf(
+            android.graphics.Color.rgb(220, 50, 50),
+            android.graphics.Color.rgb(50, 100, 220)
+        )
+        else -> listOf(
+            android.graphics.Color.rgb(220, 50, 50),
+            android.graphics.Color.rgb(50, 180, 50),
+            android.graphics.Color.rgb(50, 100, 220)
+        )
+    }
+    val lineSpecs = seriesColors.map { color ->
+        lineSpec(
+            lineColor = androidx.compose.ui.graphics.Color(color),
+            lineBackgroundShader = null
+        )
+    }
+
+    val timeFmt = remember(baseMs) {
+        AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
+            val ts = baseMs + (value * 1000f).toLong()
+            SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(Date(ts))
+        }
+    }
+
     Chart(
-        chart = lineChart(),
+        chart = lineChart(lines = lineSpecs),
         chartModelProducer = producer,
         startAxis = rememberStartAxis(),
-        bottomAxis = rememberBottomAxis(),
+        bottomAxis = rememberBottomAxis(
+            valueFormatter = timeFmt,
+            itemPlacer = AxisItemPlacer.Horizontal.default(spacing = 1, addExtremeLabelPadding = true)
+        ),
         modifier = Modifier.fillMaxSize()
     )
 }

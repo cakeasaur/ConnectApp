@@ -155,7 +155,7 @@ class BluetoothViewModel(
     }
 
     /**
-     * Send a message and echo it to the log (user-initiated).
+     * Send a message from the free-text input.
      * Если в настройках включён HEX-режим — payload интерпретируется как HEX-байты
      * ("AA 55 01") и отправляется бинарно, без терминатора.
      */
@@ -163,6 +163,15 @@ class BluetoothViewModel(
         if (_settings.value.hexSendMode) {
             sendHex(payload); return
         }
+        sendText(payload)
+    }
+
+    /**
+     * Принудительно текстовая отправка с терминатором — для quick-chips и других
+     * захардкоженных команд ('1', 'help', 'echo'). HEX-режим тут не применяется,
+     * иначе '1' (нечётное число hex-цифр) проваливался бы парсингом.
+     */
+    fun sendText(payload: String) {
         logBuffer.appendLine("→ $payload", viewModelScope)
         scheduleSave()
         val terminated = payload + _settings.value.lineEnding.suffix
@@ -228,8 +237,14 @@ class BluetoothViewModel(
         viewModelScope.launch { settingsRepo.setHexSendMode(value) }
 
     /**
-     * Калибровка акселерометров — отправляем команду '2' и слушаем 5 секунд
-     * ответы платы. Результат накапливается в [calibrationLog].
+     * Калибровка акселерометров — отправляем команду '2' и слушаем 8 секунд
+     * ответы платы. Используем StringBuilder + debounced StateFlow publish,
+     * чтобы O(n²) String-конкат не упёрся в OOM на monitor-флуде.
+     *
+     * Если плата уже в monitor-режиме, в окно может прилететь CSV-поток. Это
+     * не помеха — пользователь видит сырой raw, может вручную найти строку
+     * 'Calibration complete'. Можно было бы фильтровать по ключевым словам,
+     * но без знания вариантов прошивок это рискованно.
      */
     private val _calibrationLog = MutableStateFlow("")
     val calibrationLog: StateFlow<String> = _calibrationLog.asStateFlow()
@@ -245,21 +260,35 @@ class BluetoothViewModel(
         _calibrationRunning.value = true
         _calibrationLog.value = ""
         viewModelScope.launch {
-            // Подписываемся на incoming на ~6 сек и собираем ответы платы.
+            val buf = StringBuilder(8192)
+            var publishJob: Job? = null
             val collector = launch {
                 repo.incoming.collect { chunk ->
-                    _calibrationLog.update { it + chunk }
+                    synchronized(buf) {
+                        buf.append(chunk)
+                        // Ограничиваем размер — на monitor-флуде не сожрём всю RAM.
+                        val over = buf.length - 16_000
+                        if (over > 0) buf.delete(0, over)
+                    }
+                    // Дебаунс публикации в StateFlow — не дёргаем UI на каждый чанк.
+                    if (publishJob?.isActive != true) {
+                        publishJob = launch {
+                            delay(80)
+                            _calibrationLog.value = synchronized(buf) { buf.toString() }
+                        }
+                    }
                 }
             }
-            // Отправляем команду '2' с настроенным терминатором.
             val cmd = getApplication<Application>().getString(
                 com.example.connectapp.R.string.cmd_two
             ) + _settings.value.lineEnding.suffix
             repo.send(cmd).onFailure { e ->
-                _calibrationLog.update { it + "\n[ERROR] ${e.message ?: "send failed"}\n" }
+                synchronized(buf) { buf.append("\n[ERROR] ${e.message ?: "send failed"}\n") }
             }
-            delay(6000)
+            delay(CALIBRATION_TIMEOUT_MS)
             collector.cancel()
+            publishJob?.cancel()
+            _calibrationLog.value = synchronized(buf) { buf.toString() }
             _calibrationRunning.value = false
         }
     }
@@ -327,5 +356,7 @@ class BluetoothViewModel(
     companion object {
         private const val KEY_ADDRESS = "bt.address"
         const val KEY_LOG = "bt.log"
+        /** Сколько слушать ответ платы после отправки '2'. */
+        private const val CALIBRATION_TIMEOUT_MS = 8000L
     }
 }

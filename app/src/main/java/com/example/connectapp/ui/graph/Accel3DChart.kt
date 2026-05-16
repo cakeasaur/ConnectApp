@@ -1,7 +1,6 @@
 package com.example.connectapp.ui.graph
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -13,8 +12,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.dp
 import com.example.connectapp.data.models.TimedPoint
+import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -46,16 +45,14 @@ fun Accel3DChart(
 
     Canvas(
         modifier = modifier
+            // Один pointerInput, который обрабатывает И вращение (1-палец pan),
+            // И зум (pinch) — иначе detectDragGestures и detectTransformGestures
+            // конкурируют за первый палец и pinch плохо ловится.
             .pointerInput(Unit) {
-                detectTransformGestures { _, _, zoom, _ ->
+                detectTransformGestures { _, pan, zoom, _ ->
                     scale = (scale * zoom).coerceIn(0.3f, 5f)
-                }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures { change, drag ->
-                    change.consume()
-                    yaw += drag.x / 200f
-                    pitch = (pitch + drag.y / 200f).coerceIn(-1.5f, 1.5f)
+                    yaw = wrapAngle(yaw + pan.x / 200f)
+                    pitch = (pitch + pan.y / 200f).coerceIn(-1.5f, 1.5f)
                 }
             }
     ) {
@@ -66,37 +63,47 @@ fun Accel3DChart(
         val maxAbs = listOf(a1, a2).flatMap { it.flatten() }.maxOfOrNull { kotlin.math.abs(it) } ?: 1f
         val worldScale = (min(w, h) * 0.35f / max(maxAbs, 1f)) * scale
 
-        // Проекционные параметры.
-        val focal = min(w, h) * 1.2f
+        // Проекционные параметры. focal в формуле сокращается — оставляем именно
+        // worldScale/depth, что даёт ослабленную (мягкую) перспективу. Лучше
+        // читается для облака ~600 точек на близком расстоянии.
         val camDist = max(maxAbs, 1f) * 2.5f
 
         val cosY = cos(yaw); val sinY = sin(yaw)
         val cosX = cos(pitch); val sinX = sin(pitch)
 
         fun project(x: Float, y: Float, z: Float): Offset? {
-            // Поворот вокруг Y (yaw): (x, z) → (x*cosY + z*sinY, -x*sinY + z*cosY)
             val x1 = x * cosY + z * sinY
             val z1 = -x * sinY + z * cosY
-            // Поворот вокруг X (pitch): (y, z) → (y*cosX - z1*sinX, y*sinX + z1*cosX)
             val y2 = y * cosX - z1 * sinX
             val z2 = y * sinX + z1 * cosX
             val depth = z2 + camDist
             if (depth <= 0.01f) return null
-            val px = cx + x1 * worldScale * focal / (depth * focal)
-            val py = cy - y2 * worldScale * focal / (depth * focal)
+            // Перспективная проекция без вырожденного focal/focal.
+            val perspective = camDist / depth
+            val px = cx + x1 * worldScale * perspective
+            val py = cy - y2 * worldScale * perspective
             return Offset(px, py)
         }
 
-        // Оси координат — короткие отрезки разной длины-цвета.
-        val axisLen = maxAbs * 0.5f
+        // Оси координат — обе полуоси (+ и −), чтобы видеть знак данных.
+        val axisLen = maxAbs * 0.7f
         drawAxis(::project, axisLen, axisX = true)
         drawAxis(::project, axisLen, axisY = true)
         drawAxis(::project, axisLen, axisZ = true)
 
-        // Точки A1 (красные) и A2 (синие). Дальние точки полупрозрачные.
-        drawCloud(a1, Color(0xFFDC3232), ::project, camDist)
-        drawCloud(a2, Color(0xFF3264DC), ::project, camDist)
+        // Точки A1 (красные) и A2 (синие). Старые полупрозрачные, последняя — жирная.
+        drawCloud(a1, Color(0xFFDC3232), ::project)
+        drawCloud(a2, Color(0xFF3264DC), ::project)
     }
+}
+
+/** Нормализует угол в [-π, π], чтобы не накапливать большие значения и не терять точность. */
+private fun wrapAngle(a: Float): Float {
+    val twoPi = (2 * PI).toFloat()
+    var r = a % twoPi
+    if (r > PI) r -= twoPi
+    if (r < -PI) r += twoPi
+    return r
 }
 
 /** Тройка временных рядов одного акселерометра. */
@@ -121,8 +128,13 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawAxis(
     axisY: Boolean = false,
     axisZ: Boolean = false
 ) {
-    val origin = project(0f, 0f, 0f) ?: return
-    val end = project(
+    // Рисуем обе полуоси (от -len до +len), чтобы видеть знак данных.
+    val negEnd = project(
+        if (axisX) -len else 0f,
+        if (axisY) -len else 0f,
+        if (axisZ) -len else 0f
+    ) ?: return
+    val posEnd = project(
         if (axisX) len else 0f,
         if (axisY) len else 0f,
         if (axisZ) len else 0f
@@ -132,19 +144,18 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawAxis(
         axisY -> Color.Green
         else -> Color(0xFF4080FF)
     }
-    drawLine(color = color, start = origin, end = end, strokeWidth = 2f)
+    drawLine(color = color.copy(alpha = 0.6f), start = negEnd, end = posEnd, strokeWidth = 2f)
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCloud(
     triple: AccelTriple,
     color: Color,
-    project: (Float, Float, Float) -> Offset?,
-    camDist: Float
+    project: (Float, Float, Float) -> Offset?
 ) {
     val points = triple.triples()
+    if (points.isEmpty()) return
     points.forEachIndexed { idx, (x, y, z) ->
         val p = project(x, y, z) ?: return@forEachIndexed
-        // Старые точки бледнее, последние — ярче.
         val ageAlpha = (idx + 1f) / points.size
         drawCircle(
             color = color.copy(alpha = 0.2f + 0.8f * ageAlpha),

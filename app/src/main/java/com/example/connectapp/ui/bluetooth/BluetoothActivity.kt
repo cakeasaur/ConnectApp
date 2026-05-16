@@ -350,7 +350,8 @@ private fun BluetoothScreen(
                 )
             }
 
-            CommandChips(enabled = connected, onCommand = { viewModel.send(it) })
+            // sendText() — quick-команды всегда text-mode, иначе в HEX-режиме '1' падал.
+            CommandChips(enabled = connected, onCommand = { viewModel.sendText(it) })
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
