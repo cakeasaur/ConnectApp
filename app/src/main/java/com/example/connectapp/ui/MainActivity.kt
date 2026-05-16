@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.connectapp.R
 import com.example.connectapp.ui.bluetooth.BluetoothActivity
+import com.example.connectapp.ui.test.TestActivity
 import com.example.connectapp.ui.theme.AppThemeWithSettings
 import com.example.connectapp.ui.wifi.WifiActivity
 
@@ -106,6 +108,17 @@ private fun MainScreen() {
                     MaterialTheme.colorScheme.primary
                 ),
                 onClick = { ctx.startActivity(Intent(ctx, BluetoothActivity::class.java)) }
+            )
+
+            ConnectOption(
+                icon = Icons.Filled.Science,
+                title = stringResource(R.string.btn_test),
+                subtitle = stringResource(R.string.test_subtitle),
+                gradient = listOf(
+                    MaterialTheme.colorScheme.tertiary,
+                    MaterialTheme.colorScheme.secondary
+                ),
+                onClick = { ctx.startActivity(Intent(ctx, TestActivity::class.java)) }
             )
 
             Spacer(Modifier.weight(1f))

@@ -7,6 +7,8 @@
     <string name="main_footer">MVVM • Coroutines • Material 3</string>
     <string name="wifi_subtitle">Подключение по IP и порту</string>
     <string name="bluetooth_subtitle">Поиск и подключение к устройству</string>
+    <string name="btn_test">Тест (mock-данные)</string>
+    <string name="test_subtitle">Имитация платы — графики, парсер, CSV без железа</string>
 
     <!-- Common -->
     <string name="btn_wifi">Wi-Fi (TCP)</string>
