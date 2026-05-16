@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,6 +50,7 @@ import com.example.connectapp.R
 import com.example.connectapp.ui.bluetooth.BluetoothActivity
 import com.example.connectapp.ui.history.HistoryActivity
 import com.example.connectapp.ui.test.TestActivity
+import com.example.connectapp.ui.usb.UsbSerialActivity
 import com.example.connectapp.ui.theme.AppThemeWithSettings
 import com.example.connectapp.ui.wifi.WifiActivity
 
@@ -110,6 +112,17 @@ private fun MainScreen() {
                     MaterialTheme.colorScheme.primary
                 ),
                 onClick = { ctx.startActivity(Intent(ctx, BluetoothActivity::class.java)) }
+            )
+
+            ConnectOption(
+                icon = Icons.Filled.Usb,
+                title = stringResource(R.string.btn_usb),
+                subtitle = stringResource(R.string.usb_subtitle),
+                gradient = listOf(
+                    MaterialTheme.colorScheme.primary,
+                    MaterialTheme.colorScheme.secondary
+                ),
+                onClick = { ctx.startActivity(Intent(ctx, UsbSerialActivity::class.java)) }
             )
 
             ConnectOption(

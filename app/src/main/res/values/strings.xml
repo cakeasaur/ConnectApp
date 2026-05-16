@@ -131,6 +131,13 @@
     <string name="fg_channel_desc">Уведомление о работающем подключении к плате (BT/Wi-Fi). Держит процесс живым в фоне.</string>
     <string name="fg_title_bt">BT: %1$s</string>
     <string name="fg_title_wifi">Wi-Fi: %1$s</string>
+    <string name="fg_title_usb">USB: %1$s</string>
+
+    <!-- USB serial -->
+    <string name="btn_usb">USB serial (OTG)</string>
+    <string name="usb_subtitle">Прямое подключение через OTG к плате с UART-bridge</string>
+    <string name="usb_title">USB serial</string>
+    <string name="usb_no_devices">USB-устройства не найдены. Воткни OTG-кабель и нажми «Обновить».</string>
 
     <!-- Quick commands -->
     <string name="settings_quick_commands">Быстрые команды</string>

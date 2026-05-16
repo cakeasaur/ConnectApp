@@ -98,6 +98,11 @@ dependencies {
     implementation("com.patrykandpatrick.vico:compose:1.14.0")
     implementation("com.patrykandpatrick.vico:compose-m3:1.14.0")
 
+    // USB serial — поддержка CP210x/CDC/FTDI/CH34x/Prolific.
+    // Альтернатива HC-05/Wi-Fi: USB-OTG-кабель прямо к плате через UART-bridge.
+    // Стабильнее BT, быстрее (до 921600 baud), работает без сопряжения.
+    implementation("com.github.mik3y:usb-serial-for-android:3.7.3")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")

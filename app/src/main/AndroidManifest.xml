@@ -43,6 +43,12 @@
     <uses-feature
         android:name="android.hardware.wifi"
         android:required="false" />
+    <!-- USB host: для подключения OTG-кабелем к плате через UART-bridge
+         (CP210x, CDC, FTDI, CH34x, Prolific). required=false — приложение
+         работает и без USB-хоста (есть BT и Wi-Fi). -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -83,6 +89,11 @@
 
         <activity
             android:name=".ui.history.HistoryActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+
+        <activity
+            android:name=".ui.usb.UsbSerialActivity"
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
 
