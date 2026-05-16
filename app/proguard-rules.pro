@@ -6,8 +6,12 @@
 -dontwarn kotlinx.coroutines.flow.**
 -dontwarn kotlinx.coroutines.debug.**
 
-# --- Vico (Compose chart) — обычно не нуждается в keep, но на всякий случай ---
+# --- Vico (Compose chart) — использует рефлексию для Marker/AxisItemPlacer/
+#     AxisValuesOverrider. Без keep R8 минификация выпиливает нужные члены
+#     и графики в release-сборке падают/пустые.
+-keep class com.patrykandpatrick.vico.** { *; }
+-keepclassmembers class com.patrykandpatrick.vico.** { *; }
 -dontwarn com.patrykandpatrick.vico.**
 
-# --- AndroidX FileProvider (используется в GraphActivity для CSV) ---
--keep class androidx.core.content.FileProvider { *; }
+# FileProvider keep НЕ нужен: класс ссылается из манифеста, R8 сам сохраняет
+# manifest-referenced классы.

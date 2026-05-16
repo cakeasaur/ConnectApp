@@ -7,8 +7,19 @@ object Constants {
     /** Standard Serial Port Profile UUID for Bluetooth SPP. */
     val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
-    /** Socket connect/read timeout, milliseconds. */
-    const val SOCKET_TIMEOUT_MS = 30_000
+    /** TCP connect-timeout (socket.connect()), milliseconds. */
+    const val SOCKET_CONNECT_TIMEOUT_MS = 10_000
+
+    /**
+     * TCP read-timeout (SO_TIMEOUT для read()), milliseconds. 0 = бесконечный.
+     *
+     * Раньше read() и connect() делили один таймаут 30 сек. На тихом, но живом
+     * соединении (плата ничего не шлёт пока юзер не нажмёт monitor) read()
+     * через 30с кидал SocketTimeoutException → UI ошибочно показывал «связь
+     * потеряна». Ставим 0 — read() ждёт сколько надо, разрыв детектится по
+     * EOF/IOException от реального разрыва TCP.
+     */
+    const val SOCKET_READ_TIMEOUT_MS = 0
 
     /** Buffer size used by readers. */
     const val READ_BUFFER_SIZE = 1024

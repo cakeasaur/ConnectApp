@@ -106,7 +106,14 @@ private fun wrapAngle(a: Float): Float {
     return r
 }
 
-/** Тройка временных рядов одного акселерометра. */
+/**
+ * Тройка временных рядов одного акселерометра.
+ *
+ * Раньше [triples] возвращал `List<Triple<Float,Float,Float>>` — аллоцировал
+ * 600 объектов Triple на каждый кадр гестур-хендлера (~60 fps × 2 облака).
+ * Заменили на прямой доступ по индексу — Canvas-цикл сам ходит i in 0..n
+ * и берёт xs[i].value/ys[i].value/zs[i].value без промежуточных аллокаций.
+ */
 data class AccelTriple(
     val xs: List<TimedPoint>,
     val ys: List<TimedPoint>,
@@ -114,11 +121,8 @@ data class AccelTriple(
 ) {
     fun flatten(): List<Float> = xs.map { it.value } + ys.map { it.value } + zs.map { it.value }
 
-    /** Объединяет в (x,y,z)-тройки по индексу. */
-    fun triples(): List<Triple<Float, Float, Float>> {
-        val n = minOf(xs.size, ys.size, zs.size)
-        return List(n) { i -> Triple(xs[i].value, ys[i].value, zs[i].value) }
-    }
+    /** Количество (x,y,z)-троек, доступных одновременно. */
+    val count: Int get() = minOf(xs.size, ys.size, zs.size)
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawAxis(
@@ -152,16 +156,20 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCloud(
     color: Color,
     project: (Float, Float, Float) -> Offset?
 ) {
-    val points = triple.triples()
-    if (points.isEmpty()) return
-    points.forEachIndexed { idx, (x, y, z) ->
-        val p = project(x, y, z) ?: return@forEachIndexed
-        val ageAlpha = (idx + 1f) / points.size
+    val n = triple.count
+    if (n == 0) return
+    // Прямой проход по индексу — без аллокации List<Triple>.
+    val xs = triple.xs; val ys = triple.ys; val zs = triple.zs
+    val lastIdx = n - 1
+    val invN = 1f / n
+    for (idx in 0 until n) {
+        val p = project(xs[idx].value, ys[idx].value, zs[idx].value) ?: continue
+        val ageAlpha = (idx + 1f) * invN
         drawCircle(
             color = color.copy(alpha = 0.2f + 0.8f * ageAlpha),
             radius = 3f,
             center = p,
-            style = Stroke(width = if (idx == points.lastIndex) 4f else 1f)
+            style = Stroke(width = if (idx == lastIdx) 4f else 1f)
         )
     }
 }

@@ -474,7 +474,8 @@ private fun RecordingButton(
         Icon(
             imageVector = if (isRecording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
             contentDescription = stringResource(if (isRecording) R.string.rec_stop else R.string.rec_start),
-            tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.error
+            // REC иконка всегда красная (классика), Stop — нейтральный цвет шрифта.
+            tint = if (isRecording) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error
         )
     }
 }

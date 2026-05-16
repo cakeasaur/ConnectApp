@@ -2,11 +2,9 @@ package com.example.connectapp.ui.test
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.SensorDataBus
-import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
 import com.example.connectapp.utils.LogBuffer
 import com.example.connectapp.utils.MockDataSource
@@ -25,8 +23,7 @@ import kotlinx.coroutines.withContext
  * MockDataSource. Это даёт возможность отлаживать парсер/графики/CSV без платы.
  */
 class TestViewModel(
-    application: Application,
-    handle: SavedStateHandle
+    application: Application
 ) : AndroidViewModel(application) {
 
     private val logBuffer = LogBuffer()
@@ -50,6 +47,12 @@ class TestViewModel(
 
     fun start() {
         if (_running.value) return
+        // Чистим bus и локальный буфер — иначе при повторном старте mock
+        // прилепится к данным прошлой сессии (или к данным BT, если кто-то
+        // случайно запустил оба источника).
+        SensorDataBus.clear()
+        lineBuffer.clear()
+        _sensorData.value = SensorData()
         _running.value = true
         streamJob = viewModelScope.launch {
             MockDataSource.stream().collect { chunk ->

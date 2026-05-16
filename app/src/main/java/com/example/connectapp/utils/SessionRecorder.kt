@@ -62,12 +62,14 @@ class SessionRecorder(private val appContext: Context) {
      */
     fun appendChunk(chunk: String) {
         if (!_isRecording.value) return
-        // Захват текущего writer — снимок для IO-корутины. Если до её
-        // запуска вызовут stop(), writer уже будет закрыт, и runCatching
-        // тихо проглотит IOException.
-        val w = writer ?: return
         ioScope.launch {
+            // Перечитываем writer ВНУТРИ lock — между постановкой задачи и
+            // её выполнением stop() мог закрыть файл. Если так — writer null,
+            // ничего не делаем (вместо записи в закрытый файл, который раньше
+            // выбрасывал IOException и runCatching молча проглатывал).
             synchronized(lock) {
+                if (!_isRecording.value) return@synchronized
+                val w = writer ?: return@synchronized
                 runCatching {
                     w.write(chunk)
                     w.flush()

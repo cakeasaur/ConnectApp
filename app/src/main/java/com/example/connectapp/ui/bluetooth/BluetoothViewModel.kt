@@ -24,7 +24,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -43,7 +42,6 @@ class BluetoothViewModel(
     private val recorder = SessionRecorder(application.applicationContext)
 
     val state: StateFlow<ConnectionState> = repo.state
-    val incoming: SharedFlow<String> = repo.incoming
     val devices: StateFlow<List<BluetoothDeviceItem>> = repo.devices
     val scanning: StateFlow<Boolean> = repo.scanning
     val lastPacketAt: StateFlow<Long?> = repo.lastPacketAt
@@ -89,12 +87,21 @@ class BluetoothViewModel(
                 if (state.value is ConnectionState.Connected) sendSilent(cmd)
             }
         }
-        // Auto-monitor: при переходе в Connected (если включено) отправляем «1»
-        // — это команда «Start enhanced monitoring» в boot-меню PIC24FJ128GB106.
-        // Если нужно адаптировать под другую прошивку — поменяй строку cmd_one.
+        // Auto-monitor: при ПЕРЕХОДЕ в Connected (если включено) отправляем «1»
+        // — команда «Start enhanced monitoring» в boot-меню PIC24FJ128GB106.
+        //
+        // Важно: слушаем именно ПЕРЕХОД not-Connected → Connected, а не каждое
+        // появление Connected в state. Иначе при цикле auto-reconnect
+        // (Connecting → Connected → Reconnecting → Connected) команда уходит
+        // дважды; PIC firmware интерпретирует второе '1' как stop, и монитор
+        // молча выключается.
         viewModelScope.launch {
+            var wasConnected = false
             state.collect { s ->
-                if (s is ConnectionState.Connected && _settings.value.autoMonitor) {
+                val nowConnected = s is ConnectionState.Connected
+                val transition = nowConnected && !wasConnected
+                wasConnected = nowConnected
+                if (transition && _settings.value.autoMonitor) {
                     // Задержка чтобы плата успела выпустить boot-меню и быть в режиме приёма.
                     delay(300)
                     sendSilent(application.getString(com.example.connectapp.R.string.cmd_one))
@@ -116,6 +123,11 @@ class BluetoothViewModel(
 
     fun connect(address: String, name: String? = null) {
         lastAddress = address
+        // Чистим SensorDataBus от старой сессии: иначе графики покажут
+        // склейку «доска A → доска B» с монотонно растущими timestamps,
+        // и пользователь подумает что это один непрерывный поток.
+        SensorDataBus.clear()
+        _sensorData.value = SensorData()
         repo.connect(address, viewModelScope)
         // Запоминаем в истории (имя из bonded или из аргумента, или сам MAC).
         val displayName = name
@@ -221,7 +233,6 @@ class BluetoothViewModel(
 
     fun startRecording(): File? = recorder.start()
     fun stopRecording(): File? = recorder.stop()
-    fun shareUriFor(file: File) = recorder.shareUriFor(file)
 
     fun setAutoReconnect(value: Boolean) =
         viewModelScope.launch { settingsRepo.setAutoReconnect(value) }

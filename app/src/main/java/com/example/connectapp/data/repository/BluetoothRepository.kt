@@ -62,8 +62,16 @@ class BluetoothRepository(
     private var discoveryTimeoutJob: Job? = null
     private val internalScope = MainScope()
 
-    // True when the user explicitly requested disconnect — suppresses auto-reconnect.
-    private var intentionalDisconnect = false
+    /**
+     * "Намерение отключиться" — флаг на ТЕКУЩУЮ connect-сессию. Объект
+     * пересоздаётся в [connect], так что новая сессия не видит флаг
+     * предыдущей. Раньше был просто `var Boolean` и при сценарии
+     * `disconnect() → быстрый connect()` старая reconnect-петля могла
+     * успеть прочитать `false` от нового вызова и продолжить тыкать
+     * старый адрес.
+     */
+    private class DisconnectIntent { @Volatile var requested: Boolean = false }
+    @Volatile private var currentIntent: DisconnectIntent? = null
 
     fun isAvailable(): Boolean = adapter != null
     fun isEnabled(): Boolean = adapter?.isEnabled == true
@@ -122,7 +130,10 @@ class BluetoothRepository(
             _state.value = ConnectionState.Error("Bluetooth not available")
             return
         }
-        intentionalDisconnect = false
+        // Своё намерение для этой сессии — не делим shared boolean со старой,
+        // которая могла ещё крутиться в reconnect-петле.
+        val intent = DisconnectIntent()
+        currentIntent = intent
         stopDiscovery()
 
         connectionJob?.cancel()
@@ -130,7 +141,7 @@ class BluetoothRepository(
             var attempt = 0
             var wasConnected = false
             try {
-                while (isActive && !intentionalDisconnect) {
+                while (isActive && !intent.requested) {
                     if (attempt == 0) {
                         _state.value = ConnectionState.Connecting
                     } else {
@@ -139,7 +150,7 @@ class BluetoothRepository(
                         _state.value = ConnectionState.Reconnecting(attempt)
                         delay(Constants.RECONNECT_DELAY_MS)
                     }
-                    if (!isActive || intentionalDisconnect) break
+                    if (!isActive || intent.requested) break
 
                     try {
                         client.connect(a, address)
@@ -170,13 +181,13 @@ class BluetoothRepository(
                         }
                     }
 
-                    if (!intentionalDisconnect) attempt++
+                    if (!intent.requested) attempt++
                 }
             } catch (e: CancellationException) {
                 // External cancellation (manual disconnect or viewModelScope cleared).
             } finally {
                 withContext(NonCancellable) {
-                    if (intentionalDisconnect) _state.value = ConnectionState.Idle
+                    if (intent.requested) _state.value = ConnectionState.Idle
                 }
             }
         }
@@ -187,7 +198,7 @@ class BluetoothRepository(
     suspend fun sendBytes(bytes: ByteArray): Result<Unit> = runCatching { client.sendBytes(bytes) }
 
     suspend fun disconnect() {
-        intentionalDisconnect = true
+        currentIntent?.requested = true
         // Закрываем сокет ДО ожидания job — иначе блокирующий read() в incoming()
         // будет висеть до таймаута и cancel() не отработает мгновенно.
         runCatching { client.close() }
@@ -197,7 +208,7 @@ class BluetoothRepository(
     }
 
     fun release() {
-        intentionalDisconnect = true
+        currentIntent?.requested = true
         connectionJob?.cancel()
         connectionJob = null
         stopDiscovery()

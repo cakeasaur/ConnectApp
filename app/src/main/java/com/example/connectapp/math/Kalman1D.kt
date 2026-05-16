@@ -50,10 +50,4 @@ class Kalman1D(
 
         return estimate
     }
-
-    /** Сброс — начать накапливать заново. */
-    fun reset() {
-        estimate = 0f
-        covariance = 1f
-    }
 }

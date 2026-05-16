@@ -29,7 +29,6 @@
     <string name="label_devices">Устройства</string>
     <string name="label_no_data">— нет данных —</string>
     <string name="label_no_devices">Нет устройств — нажмите «Поиск»</string>
-    <string name="label_temperature">Температура</string>
     <string name="label_accelerometer">Акселерометр</string>
     <string name="label_temperature_unit">Температура °C</string>
 
@@ -67,7 +66,6 @@
     <!-- Hex send -->
     <string name="settings_hex_send">Отправлять как HEX (\"AA 55 01\")</string>
     <string name="hex_send_hint">HEX-байты через пробел (AA 55 01 FF)</string>
-    <string name="hex_send_invalid">Неверный HEX: %1$s</string>
 
     <!-- Graphs -->
     <string name="graph_title">Графики датчиков</string>
@@ -75,8 +73,6 @@
     <string name="graph_no_export_data">Нет данных для экспорта</string>
     <string name="graph_export_intent_title">Экспорт данных</string>
     <string name="graph_export_subject">Данные датчиков ConnectApp</string>
-    <string name="graph_temp_hint">Нажмите «temp» или включите авто-опрос</string>
-    <string name="graph_accel_hint">Нажмите «accel» или включите авто-опрос</string>
 
     <!-- Heartbeat / sensor stats -->
     <string name="hb_just_now">только что</string>

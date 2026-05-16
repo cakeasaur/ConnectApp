@@ -26,14 +26,16 @@ class WifiRepository(
     private val _incoming = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val incoming: SharedFlow<String> = _incoming.asSharedFlow()
 
-    /** Метка времени последнего пакета. Нужно для UI-индикатора «жив ли поток». */
-    private val _lastPacketAt = MutableStateFlow<Long?>(null)
-    val lastPacketAt: StateFlow<Long?> = _lastPacketAt.asStateFlow()
-
     private var readerJob: Job? = null
 
     suspend fun connect(host: String, port: Int, scope: CoroutineScope) {
-        if (_state.value is ConnectionState.Connected) return
+        // Идемпотентность: уже соединены или процесс открытия идёт — выходим.
+        // Без гарда на Connecting двойной тап по "Подключить" откроет второй
+        // socket; первый утечёт (readerJob перезатёрт без cancel).
+        when (_state.value) {
+            is ConnectionState.Connected, is ConnectionState.Connecting -> return
+            else -> { /* fall through */ }
+        }
         // Дожидаемся завершения предыдущего reader'а ДО открытия нового сокета —
         // иначе старый job в finally закроет client, уже принадлежащий новой сессии.
         readerJob?.cancelAndJoin()
@@ -48,7 +50,6 @@ class WifiRepository(
             readerJob = scope.launch {
                 try {
                     client.incoming().collect {
-                        _lastPacketAt.value = System.currentTimeMillis()
                         _incoming.emit(it)
                     }
                     // Stream ended cleanly → remote closed.

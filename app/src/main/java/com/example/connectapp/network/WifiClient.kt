@@ -34,11 +34,11 @@ class WifiClient {
     /** Connect to host:port. Throws on failure. */
     suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
         val s = Socket()
-        s.connect(InetSocketAddress(host, port), Constants.SOCKET_TIMEOUT_MS)
-        // SO_TIMEOUT: без этого read() висит бесконечно при «чёрной дыре» (NAT-таймаут,
-        // отключённый Wi-Fi без RST). С таймаутом получим SocketTimeoutException
-        // → репозиторий пометит соединение как разорванное и (для BT) попробует переподключиться.
-        s.soTimeout = Constants.SOCKET_TIMEOUT_MS
+        s.connect(InetSocketAddress(host, port), Constants.SOCKET_CONNECT_TIMEOUT_MS)
+        // SO_TIMEOUT = 0 (бесконечно) — на тихих соединениях read() ждёт сколько
+        // надо. Разрыв TCP детектится через EOF/IOException от ядра, а не таймаутом.
+        // SO_KEEPALIVE отлавливает мёртвую сторону через ~2 часа (Linux default).
+        s.soTimeout = Constants.SOCKET_READ_TIMEOUT_MS
         s.keepAlive = true
         socket = s
         output = s.getOutputStream()

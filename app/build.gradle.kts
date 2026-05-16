@@ -59,16 +59,18 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    // Используется только для XML-темы splash (Theme.Material3.DayNight.NoActionBar).
+    // Material 1.12.0 нужна ТОЛЬКО для XML-темы (Theme.Material3.DayNight.NoActionBar).
+    // AppCompat НЕ нужен — все Activity наследуются от ComponentActivity, не AppCompatActivity.
     implementation("com.google.android.material:material:1.12.0")
 
-    // Lifecycle + ViewModel + SavedState
+    // Lifecycle + ViewModel + SavedState.
+    // lifecycle-runtime-compose даёт collectAsStateWithLifecycle().
+    // lifecycle-viewmodel-compose НЕ нужен — все Activity создают VM через by viewModels()
+    // из activity-ktx, а не через compose-helper viewModel().
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.activity:activity-ktx:1.9.2")
     implementation("androidx.activity:activity-compose:1.9.2")
 

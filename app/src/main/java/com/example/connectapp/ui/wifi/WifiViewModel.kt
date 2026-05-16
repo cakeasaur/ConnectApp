@@ -12,7 +12,6 @@ import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.LogBuffer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -26,7 +25,6 @@ class WifiViewModel(
     @Volatile private var settings: AppSettings = AppSettings.DEFAULT
 
     val state: StateFlow<ConnectionState> = repo.state
-    val incoming: SharedFlow<String> = repo.incoming
 
     /** Аккумулированный лог, переживающий смену конфигурации. */
     private val logBuffer = LogBuffer(initial = handle.get<String>(KEY_LOG).orEmpty())

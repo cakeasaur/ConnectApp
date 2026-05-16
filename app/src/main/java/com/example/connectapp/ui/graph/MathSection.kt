@@ -101,18 +101,23 @@ fun MathSection() {
 
 @Composable
 private fun FftCard(series: List<TimedPoint>) {
-    val values = series.map { it.value }.toFloatArray()
-    if (values.size < 32) {
+    if (series.size < 32) {
         EmptyCard("Собираю данные… нужно ≥32 отсчётов")
         return
     }
-    // Берём последние min(256, размер) отсчётов — FFT внутри округлит вниз до степени 2.
-    val window = values.takeLast(min(values.size, 256)).toFloatArray()
-    val spectrum = remember(window.size, window.lastOrNull()) {
-        Fft.amplitudeSpectrum(window)
+    // ВСЁ вычисление вместе с аллокацией FloatArray — внутри remember.
+    // Ключ: размер + timestamp последней точки. Список TimedPoint
+    // создаётся новый каждый recompose (StateFlow), поэтому ссылочное
+    // равенство `series` всегда false → нужен стабильный ключ.
+    val winSize = min(series.size, 256)
+    val lastT = series.last().t
+    val spectrum = remember(series.size, lastT) {
+        val arr = FloatArray(winSize)
+        val from = series.size - winSize
+        for (i in 0 until winSize) arr[i] = series[from + i].value
+        Fft.amplitudeSpectrum(arr)
     }
-    // Размер FFT после округления вниз до степени 2.
-    val fftSize = nearestPow2Down(window.size)
+    val fftSize = nearestPow2Down(winSize)
     val nyquist = SAMPLE_RATE_HZ / 2f
 
     // Поиск доминирующего пика (без бина 0 — это DC).
@@ -192,9 +197,19 @@ private fun nearestPow2Down(n: Int): Int {
 
 @Composable
 private fun VibrationStatsCard(label: String, series: List<TimedPoint>) {
-    val values = series.takeLast(128).map { it.value }.toFloatArray()
-    val stats = remember(values.size, values.lastOrNull()) {
-        computeVibrationStats(values)
+    if (series.isEmpty()) {
+        EmptyCard("$label: жду данные…")
+        return
+    }
+    // Аллокация FloatArray вместе с вычислением — внутри remember, иначе
+    // 4 × 128 floats каждые 100мс летят в GC впустую.
+    val winSize = min(series.size, 128)
+    val lastT = series.last().t
+    val stats = remember(series.size, lastT) {
+        val arr = FloatArray(winSize)
+        val from = series.size - winSize
+        for (i in 0 until winSize) arr[i] = series[from + i].value
+        computeVibrationStats(arr)
     }
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -232,9 +247,16 @@ private fun StatBox(label: String, value: String, warn: Boolean = false) {
 
 @Composable
 private fun TiltCard(ax: List<TimedPoint>, ay: List<TimedPoint>, az: List<TimedPoint>) {
-    val axV = ax.lastOrNull()?.value ?: 0f
-    val ayV = ay.lastOrNull()?.value ?: 0f
-    val azV = az.lastOrNull()?.value ?: 1000f
+    // Если данных нет — НЕ фабрикуем фейковую ориентацию (0,0,1000 = "горизонт"),
+    // иначе пользователь видит ровный пузырёк и думает, что плата лежит. Лучше
+    // явно сказать "жду данные".
+    val axV = ax.lastOrNull()?.value
+    val ayV = ay.lastOrNull()?.value
+    val azV = az.lastOrNull()?.value
+    if (axV == null || ayV == null || azV == null) {
+        EmptyCard("Жду показаний акселерометра A1…")
+        return
+    }
     val pitch = Orientation.pitchDeg(axV, ayV, azV)
     val roll = Orientation.rollDeg(axV, ayV, azV)
     val mag = Orientation.magnitude(axV, ayV, azV)
@@ -314,10 +336,18 @@ private fun CrossCorrCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
         EmptyCard("Собираю данные… нужно ≥32 пар отсчётов")
         return
     }
-    val x = a1.takeLast(n).map { it.value }.toFloatArray()
-    val y = a2.takeLast(n).map { it.value }.toFloatArray()
     val maxLag = min(20, n / 4)
-    val corr = remember(n, x.lastOrNull(), y.lastOrNull()) {
+    val lastT1 = a1.last().t
+    val lastT2 = a2.last().t
+    val corr = remember(n, lastT1, lastT2) {
+        val x = FloatArray(n)
+        val y = FloatArray(n)
+        val from1 = a1.size - n
+        val from2 = a2.size - n
+        for (i in 0 until n) {
+            x[i] = a1[from1 + i].value
+            y[i] = a2[from2 + i].value
+        }
         CrossCorrelation.normalized(x, y, maxLag)
     }
     val (bestLag, bestVal) = CrossCorrelation.bestLag(corr, maxLag)
@@ -431,14 +461,30 @@ private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
         EmptyCard("Жду данные…")
         return
     }
-    // Считаем оценку с нуля по всему окну. Не оптимально (можно держать
-    // состояние во ViewModel), но просто и наглядно для демо.
-    val estimate = remember(n, a1.lastOrNull(), a2.lastOrNull()) {
-        val k = Kalman1D(processVar = 0.5f, measVar1 = 5f, measVar2 = 8f)
-        for (i in 0 until n) {
-            k.update(a1[i].value, a2[i].value)
+    // Kalman держим в remember МЕЖДУ recompose'ами и шагаем только на новых
+    // отсчётах с прошлого раза. Раньше каждый recompose выполнял O(n) проход
+    // по всему окну — на 600 точках это лишние ~3k mul/add впустую.
+    val kalman = remember { Kalman1D(processVar = 0.5f, measVar1 = 5f, measVar2 = 8f) }
+    // Изменяемый holder для последнего обработанного timestamp.
+    // LongArray(1) — простейший mutable Long без MutableState (не дёргаем recompose).
+    val lastSeenT = remember { LongArray(1) { Long.MIN_VALUE } }
+    val lastT1 = a1.last().t
+    val lastT2 = a2.last().t
+    val estimate = remember(lastT1, lastT2) {
+        val n1 = a1.size; val n2 = a2.size
+        val pairCount = min(n1, n2)
+        // Найти первый ещё не обработанный индекс. a1 отсортирован по t (append-only).
+        val startT = lastSeenT[0]
+        var startIdx = pairCount - 1
+        while (startIdx >= 0 && a1[startIdx + (n1 - pairCount)].t > startT) startIdx--
+        startIdx++
+        val off1 = n1 - pairCount
+        val off2 = n2 - pairCount
+        for (i in startIdx until pairCount) {
+            kalman.update(a1[i + off1].value, a2[i + off2].value)
         }
-        k.estimate to k.covariance
+        lastSeenT[0] = lastT1
+        kalman.estimate to kalman.covariance
     }
     val raw1 = a1.last().value
     val raw2 = a2.last().value

@@ -103,6 +103,4 @@ class BluetoothClient {
         output = null
         socket = null
     }
-
-    fun isConnected(): Boolean = socket?.isConnected == true
 }
