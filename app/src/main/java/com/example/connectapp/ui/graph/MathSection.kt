@@ -80,6 +80,12 @@ fun MathSection(
     Text("Спектр вибрации ax1 (FFT, окно Ханна)", style = MaterialTheme.typography.titleMedium)
     FftCard(a1x)
 
+    Text(
+        "Спектрограмма ax1 (STFT-waterfall, turbo-палитра)",
+        style = MaterialTheme.typography.titleMedium
+    )
+    SpectrogramCard(series = a1x, sampleRateHz = SAMPLE_RATE_HZ)
+
     Text("Дескрипторы вибрации (ISO 10816)", style = MaterialTheme.typography.titleMedium)
     VibrationStatsCard("ax1", a1x)
     VibrationStatsCard("ax2", a2x)
