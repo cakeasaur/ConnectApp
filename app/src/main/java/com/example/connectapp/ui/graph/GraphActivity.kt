@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
@@ -76,10 +77,51 @@ class GraphActivity : ComponentActivity() {
             AppThemeWithSettings {
                 GraphScreen(
                     onBack = { finish() },
-                    onExport = { exportCsv() }
+                    onExport = { exportCsv() },
+                    onExportPdf = { exportPdf() }
                 )
             }
         }
+    }
+
+    private fun exportPdf() {
+        // Берём ТЕКУЩИЙ снимок данных из SensorDataBus. Не window'им —
+        // отчёт включает ВСЁ окно записи (то что в bus сейчас). Если нужно
+        // окно — пользователь делает CSV-экспорт через window-фильтр.
+        val temp1 = SensorDataBus.temp1.value
+        val temp2 = SensorDataBus.temp2.value
+        val a1x = SensorDataBus.accel1X.value
+        val a1y = SensorDataBus.accel1Y.value
+        val a1z = SensorDataBus.accel1Z.value
+        val a2x = SensorDataBus.accel2X.value
+        val a2y = SensorDataBus.accel2Y.value
+        val a2z = SensorDataBus.accel2Z.value
+        if ((temp1 + temp2 + a1x + a2x).isEmpty()) {
+            Toast.makeText(this, getString(R.string.graph_no_export_data), Toast.LENGTH_SHORT).show()
+            return
+        }
+        // Чистим старые PDF — те же правила что для CSV.
+        runCatching {
+            cacheDir.listFiles { f -> f.name.startsWith("sensor_report_") && f.name.endsWith(".pdf") }
+                ?.forEach { it.delete() }
+        }
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+        val file = File(cacheDir, "sensor_report_$timestamp.pdf")
+        val ok = com.example.connectapp.utils.PdfReporter.build(
+            file, temp1, temp2, a1x, a1y, a1z, a2x, a2y, a2z
+        )
+        if (ok == null) {
+            Toast.makeText(this, "PDF export failed", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.graph_export_subject))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, getString(R.string.graph_export_intent_title)))
     }
 
     private fun exportCsv() {
@@ -137,7 +179,7 @@ class GraphActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
+private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: () -> Unit) {
     // Live-данные с шины. Дальше прогоняем через snapshotWhen(paused) и
     // applyWindow(window) — фильтры применяются и к графикам, и к MathSection.
     val temp1Live by SensorDataBus.temp1.collectAsStateWithLifecycle()
@@ -195,6 +237,12 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                             ),
                             tint = if (paused) MaterialTheme.colorScheme.primary
                                    else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    IconButton(onClick = onExportPdf) {
+                        Icon(
+                            Icons.Filled.PictureAsPdf,
+                            contentDescription = stringResource(R.string.graph_export_pdf)
                         )
                     }
                     IconButton(onClick = onExport) {
