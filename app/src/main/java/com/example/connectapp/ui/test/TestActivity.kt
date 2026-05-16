@@ -201,19 +201,18 @@ private fun SensorPanel(data: SensorData) {
                 }
             }
             if (data.hasAnyAccel) {
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    if (data.accel1X != null || data.accel1Y != null || data.accel1Z != null) {
-                        SensorTile(
-                            Icons.Filled.Tune, "A1",
-                            "X:%.0f Y:%.0f Z:%.0f".format(Locale.ROOT, data.accel1X ?: 0f, data.accel1Y ?: 0f, data.accel1Z ?: 0f)
-                        )
-                    }
-                    if (data.accel2X != null || data.accel2Y != null || data.accel2Z != null) {
-                        SensorTile(
-                            Icons.Filled.Tune, "A2",
-                            "X:%.0f Y:%.0f Z:%.0f".format(Locale.ROOT, data.accel2X ?: 0f, data.accel2Y ?: 0f, data.accel2Z ?: 0f)
-                        )
-                    }
+                // Каждый акселерометр на своей строке — иначе 6 чисел не помещаются.
+                if (data.accel1X != null || data.accel1Y != null || data.accel1Z != null) {
+                    SensorTile(
+                        Icons.Filled.Tune, "A1",
+                        "%+5.0f  %+5.0f  %+5.0f".format(Locale.ROOT, data.accel1X ?: 0f, data.accel1Y ?: 0f, data.accel1Z ?: 0f)
+                    )
+                }
+                if (data.accel2X != null || data.accel2Y != null || data.accel2Z != null) {
+                    SensorTile(
+                        Icons.Filled.Tune, "A2",
+                        "%+5.0f  %+5.0f  %+5.0f".format(Locale.ROOT, data.accel2X ?: 0f, data.accel2Y ?: 0f, data.accel2Z ?: 0f)
+                    )
                 }
             }
         }

@@ -253,9 +253,16 @@ private fun ChartCard(content: @Composable () -> Unit) {
     }
 }
 
-private class TimeAxisFormatter : ValueFormatter() {
+/**
+ * X-ось — секунды относительно [baseMs] (timestamp первой точки).
+ * Раньше брали абсолютный millis-timestamp и кастили в Float — но Float
+ * хранит только ~7 значащих цифр, а ms-timestamp 13. Все точки в одной
+ * секунде округлялись в одну координату X и график «сжимался» в линию.
+ */
+private class RelativeTimeFormatter(private val baseMs: Long) : ValueFormatter() {
     private val fmt = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
-    override fun getFormattedValue(value: Float): String = fmt.format(Date(value.toLong()))
+    override fun getFormattedValue(value: Float): String =
+        fmt.format(Date(baseMs + (value * 1000f).toLong()))
 }
 
 private fun configureChart(chart: LineChart, noDataText: String) {
@@ -269,16 +276,19 @@ private fun configureChart(chart: LineChart, noDataText: String) {
     chart.setDrawGridBackground(false)
     chart.xAxis.position = XAxis.XAxisPosition.BOTTOM
     chart.xAxis.setDrawGridLines(true)
-    chart.xAxis.valueFormatter = TimeAxisFormatter()
-    // labelCount=4 не даёт меткам слипнуться при компактном экране.
+    // valueFormatter поставим в update() — там известен baseMs.
     chart.xAxis.setLabelCount(4, true)
     chart.axisLeft.setDrawGridLines(true)
     chart.axisRight.isEnabled = false
     chart.legend.isEnabled = true
 }
 
-private fun makeSet(points: List<TimedPoint>, label: String, color: Int): LineDataSet {
-    val entries = points.map { Entry(it.t.toFloat(), it.value) }
+/**
+ * X = (точка.t - baseMs) / 1000  — секунды относительно начала наблюдения.
+ * Так Float-точность не теряется (для 10-минутного окна нужно всего ~3 знака).
+ */
+private fun makeSet(points: List<TimedPoint>, baseMs: Long, label: String, color: Int): LineDataSet {
+    val entries = points.map { Entry((it.t - baseMs).toFloat() / 1000f, it.value) }
     return LineDataSet(entries, label).apply {
         this.color = color
         setCircleColor(color)
@@ -300,9 +310,14 @@ private fun TwoLineTempChart(temp1: List<TimedPoint>, temp2: List<TimedPoint>) {
             if (temp1.isEmpty() && temp2.isEmpty()) {
                 chart.clear(); chart.invalidate(); return@AndroidView
             }
+            val baseMs = minOf(
+                temp1.firstOrNull()?.t ?: Long.MAX_VALUE,
+                temp2.firstOrNull()?.t ?: Long.MAX_VALUE
+            )
+            chart.xAxis.valueFormatter = RelativeTimeFormatter(baseMs)
             val sets = mutableListOf<LineDataSet>()
-            if (temp1.isNotEmpty()) sets += makeSet(temp1, "T1", Color.rgb(220, 50, 50))
-            if (temp2.isNotEmpty()) sets += makeSet(temp2, "T2", Color.rgb(50, 100, 220))
+            if (temp1.isNotEmpty()) sets += makeSet(temp1, baseMs, "T1", Color.rgb(220, 50, 50))
+            if (temp2.isNotEmpty()) sets += makeSet(temp2, baseMs, "T2", Color.rgb(50, 100, 220))
             chart.data = LineData(sets.toList<LineDataSet>())
             chart.invalidate()
         }
@@ -324,10 +339,16 @@ private fun AccelChart(
             if (xs.isEmpty() && ys.isEmpty() && zs.isEmpty()) {
                 chart.clear(); chart.invalidate(); return@AndroidView
             }
+            val baseMs = minOf(
+                xs.firstOrNull()?.t ?: Long.MAX_VALUE,
+                ys.firstOrNull()?.t ?: Long.MAX_VALUE,
+                zs.firstOrNull()?.t ?: Long.MAX_VALUE
+            )
+            chart.xAxis.valueFormatter = RelativeTimeFormatter(baseMs)
             chart.data = LineData(
-                makeSet(xs, "X", Color.rgb(220, 50, 50)),
-                makeSet(ys, "Y", Color.rgb(50, 180, 50)),
-                makeSet(zs, "Z", Color.rgb(50, 100, 220))
+                makeSet(xs, baseMs, "X", Color.rgb(220, 50, 50)),
+                makeSet(ys, baseMs, "Y", Color.rgb(50, 180, 50)),
+                makeSet(zs, baseMs, "Z", Color.rgb(50, 100, 220))
             )
             chart.invalidate()
         }
