@@ -94,12 +94,15 @@ class UsbSerialRepository(
         }
 
     /**
-     * Подключиться к [device]. Сначала спрашиваем разрешение (если ещё нет),
-     * затем открываем порт и запускаем reader.
+     * Подключиться к [device]. Один job на всю связку (permission + connect +
+     * read). Раньше внутренний reader-launch присваивался ВНУТРИ внешнего —
+     * disconnect между этими двумя launch'ами видел readerJob=null и не
+     * отменял ещё не запущенный read-цикл, который потом стартовал и
+     * продолжал читать после disconnect.
      */
     fun connect(device: UsbDevice, scope: CoroutineScope, baudRate: Int = 115200) {
         readerJob?.cancel()
-        scope.launch {
+        readerJob = scope.launch {
             _state.value = ConnectionState.Connecting
             val granted = runCatching { requestPermission(device) }.getOrDefault(false)
             if (!granted) {
@@ -110,19 +113,19 @@ class UsbSerialRepository(
                 client.connect(appContext, device, baudRate)
                 _state.value = ConnectionState.Connected
                 registerDetachReceiver()
-                readerJob = scope.launch {
-                    try {
-                        client.incoming().collect { _incoming.emit(it) }
-                        if (_state.value is ConnectionState.Connected) {
-                            _state.value = ConnectionState.Disconnected
-                        }
-                    } catch (e: CancellationException) { throw e }
-                    catch (t: Throwable) {
-                        _state.value = ConnectionState.Error(t.message ?: "USB read error")
-                    } finally {
-                        withContext(NonCancellable) { runCatching { client.close() } }
+                try {
+                    client.incoming().collect { _incoming.emit(it) }
+                    if (_state.value is ConnectionState.Connected) {
+                        _state.value = ConnectionState.Disconnected
                     }
+                } catch (e: CancellationException) { throw e }
+                catch (t: Throwable) {
+                    _state.value = ConnectionState.Error(t.message ?: "USB read error")
+                } finally {
+                    withContext(NonCancellable) { runCatching { client.close() } }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (t: Throwable) {
                 _state.value = ConnectionState.Error(t.message ?: "USB connect failed")
                 runCatching { client.close() }

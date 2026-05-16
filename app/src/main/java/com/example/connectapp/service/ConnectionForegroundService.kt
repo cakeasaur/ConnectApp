@@ -106,19 +106,50 @@ class ConnectionForegroundService : Service() {
         private const val EXTRA_TITLE = "title"
 
         /**
-         * Запустить сервис с указанным текстом в notification.
-         * Повторный вызов с другим [title] обновит уведомление, но не пересоздаст
-         * сервис (Android коалесцирует Intent'ы к startService).
+         * Reference counter — сколько "владельцев" (BT/Wi-Fi/USB VM) сейчас
+         * считают что сервис должен работать. Без него сценарий:
+         *   - BT-сессия активна → BT-VM запустила сервис
+         *   - Пользователь открыл USB → USB-сессия активна → USB-VM тоже
+         *     "запустила" (idempotent)
+         *   - BT отключился → BT-VM позвала stop() → СЕРВИС УБИВАЕТСЯ,
+         *     хотя USB-сессия живая.
+         * С refcount: stop() уменьшает счётчик, сервис реально умирает только
+         * когда counter == 0.
+         */
+        @Volatile private var refCount = 0
+        private val refLock = Any()
+
+        /**
+         * Запустить сервис (или обновить notification, если уже работает).
+         * Повторный вызов от того же владельца — TODO: пока считаем что каждый
+         * VM не дёргает start() двойным образом (это гарантируется state-машиной
+         * в VM: запуск только на edge not-Connected → Connected).
          */
         fun start(context: Context, title: String) {
+            synchronized(refLock) { refCount++ }
             val intent = Intent(context, ConnectionForegroundService::class.java)
                 .putExtra(EXTRA_TITLE, title)
-            ContextCompat.startForegroundService(context, intent)
+            runCatching {
+                // На Android 12+ запуск fg-service из background может
+                // кинуть ForegroundServiceStartNotAllowedException. Ловим,
+                // чтобы не убить процесс. У нас старт идёт только из активной
+                // VM (которая жива пока Activity видна), так что обычно ок.
+                ContextCompat.startForegroundService(context, intent)
+            }.onFailure {
+                // Откатим счётчик при фейле — иначе stop() не сработает.
+                synchronized(refLock) { refCount-- }
+            }
         }
 
-        /** Остановить сервис. Notification снимается в onDestroy. */
+        /** Уменьшить счётчик. Реально стопаем сервис только когда counter = 0. */
         fun stop(context: Context) {
-            context.stopService(Intent(context, ConnectionForegroundService::class.java))
+            val shouldStop = synchronized(refLock) {
+                if (refCount > 0) refCount--
+                refCount == 0
+            }
+            if (shouldStop) {
+                context.stopService(Intent(context, ConnectionForegroundService::class.java))
+            }
         }
     }
 }

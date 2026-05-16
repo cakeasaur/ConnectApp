@@ -54,6 +54,11 @@ private const val SAMPLE_RATE_HZ = 10f
  *   Orientation    <0.01 мс
  * Итого <2 мс на полный пересчёт — Compose 60 fps не страдает.
  */
+/**
+ * @param generation монотонный counter из SensorDataBus, инкрементируется
+ *   при clear(). Stateful-математика (Kalman) использует его как ключ
+ *   для сброса собственного накопленного состояния.
+ */
 @Composable
 fun MathSection(
     t1: List<TimedPoint>,
@@ -61,7 +66,8 @@ fun MathSection(
     a1x: List<TimedPoint>,
     a1y: List<TimedPoint>,
     a1z: List<TimedPoint>,
-    a2x: List<TimedPoint>
+    a2x: List<TimedPoint>,
+    generation: Int = 0
 ) {
     Spacer(Modifier.height(8.dp))
     Text("Математический анализ", style = MaterialTheme.typography.titleLarge)
@@ -88,7 +94,7 @@ fun MathSection(
     HeatFluxCard(t1, t2)
 
     Text("Слияние акселерометров (Kalman 1D)", style = MaterialTheme.typography.titleMedium)
-    KalmanFusionCard(a1x, a2x)
+    KalmanFusionCard(a1x, a2x, generation)
 }
 
 // ============================================================
@@ -451,7 +457,7 @@ private fun HeatFluxCard(t1: List<TimedPoint>, t2: List<TimedPoint>) {
 // ============================================================
 
 @Composable
-private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
+private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>, generation: Int) {
     val n = min(a1.size, a2.size)
     if (n < 5) {
         EmptyCard("Жду данные…")
@@ -460,10 +466,13 @@ private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
     // Kalman держим в remember МЕЖДУ recompose'ами и шагаем только на новых
     // отсчётах с прошлого раза. Раньше каждый recompose выполнял O(n) проход
     // по всему окну — на 600 точках это лишние ~3k mul/add впустую.
-    val kalman = remember { Kalman1D(processVar = 0.5f, measVar1 = 5f, measVar2 = 8f) }
+    //
+    // generation как ключ remember: при SensorDataBus.clear() инкрементится →
+    // пересоздаём Kalman с нуля, иначе оценка тащит state от удалённой сессии.
+    val kalman = remember(generation) { Kalman1D(processVar = 0.5f, measVar1 = 5f, measVar2 = 8f) }
     // Изменяемый holder для последнего обработанного timestamp.
     // LongArray(1) — простейший mutable Long без MutableState (не дёргаем recompose).
-    val lastSeenT = remember { LongArray(1) { Long.MIN_VALUE } }
+    val lastSeenT = remember(generation) { LongArray(1) { Long.MIN_VALUE } }
     val lastT1 = a1.last().t
     val lastT2 = a2.last().t
     val estimate = remember(lastT1, lastT2) {

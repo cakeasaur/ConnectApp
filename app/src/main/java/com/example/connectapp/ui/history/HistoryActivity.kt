@@ -36,7 +36,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +49,8 @@ import androidx.core.content.FileProvider
 import com.example.connectapp.R
 import com.example.connectapp.ui.test.TestActivity
 import com.example.connectapp.ui.theme.AppThemeWithSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -89,9 +93,13 @@ private fun HistoryScreen(onBack: () -> Unit, onReplay: (File) -> Unit) {
     // после Delete/Share-возврата).
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     var pendingDelete by remember { mutableStateOf<File?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
-        files = loadSessions(ctx.externalCacheDir, ctx.cacheDir)
+        // listFiles + sort на main thread на 100+ файлах лагает.
+        files = withContext(Dispatchers.IO) {
+            loadSessions(ctx.externalCacheDir, ctx.cacheDir)
+        }
     }
 
     Scaffold(
@@ -148,9 +156,13 @@ private fun HistoryScreen(onBack: () -> Unit, onReplay: (File) -> Unit) {
             file = toDelete,
             onCancel = { pendingDelete = null },
             onConfirm = {
-                toDelete.delete()
                 pendingDelete = null
-                files = loadSessions(ctx.externalCacheDir, ctx.cacheDir)
+                scope.launch {
+                    withContext(Dispatchers.IO) { toDelete.delete() }
+                    files = withContext(Dispatchers.IO) {
+                        loadSessions(ctx.externalCacheDir, ctx.cacheDir)
+                    }
+                }
             }
         )
     }

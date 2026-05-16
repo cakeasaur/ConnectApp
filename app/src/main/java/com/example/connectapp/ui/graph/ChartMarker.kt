@@ -50,18 +50,19 @@ fun rememberChartMarker(): Marker {
         shape = remember { DashedShape(Shapes.rectShape, dashLengthDp = 4f, gapLengthDp = 4f) },
     )
     val marker = markerComponent(label = label, indicator = indicator, guideline = guideline)
-    // labelFormatter — мутируемое поле MarkerComponent. Сетим один раз
-    // через remember-then-set (SideEffect не нужен — поле read-only после установки).
-    remember(marker) {
-        marker.labelFormatter = MarkerLabelFormatter { entries, _ ->
-            // entries — список выделенных точек (по одной на каждую серию,
-            // если их несколько в чарте). Берём первую — её x/y покажем.
-            val first = entries.firstOrNull() ?: return@MarkerLabelFormatter ""
-            val x = first.entry.x
-            val y = first.entry.y
-            String.format(Locale.ROOT, "%.0fs · %.2f", x, y)
+    // labelFormatter — мутируемое поле MarkerComponent. Сетим под remember-
+    // ключом (marker) чтобы не пересоздавать formatter на каждый recompose.
+    // markerComponent() возвращает новый instance каждый раз (нет внутреннего
+    // remember в Vico 1.14), но Compose всё равно дедуплицирует структурно
+    // равные значения — на практике label/indicator/guideline стабильны.
+    return remember(marker) {
+        marker.apply {
+            labelFormatter = MarkerLabelFormatter { entries, _ ->
+                val first = entries.firstOrNull() ?: return@MarkerLabelFormatter ""
+                val x = first.entry.x
+                val y = first.entry.y
+                String.format(Locale.ROOT, "%.0fs · %.2f", x, y)
+            }
         }
-        marker
     }
-    return marker
 }

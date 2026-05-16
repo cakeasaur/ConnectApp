@@ -61,6 +61,14 @@ object SensorDataBus {
         }
     }
 
+    /**
+     * Поколение шины. Инкрементируется при [clear] — потребители (например,
+     * stateful Kalman в MathSection) используют это как ключ для сброса
+     * собственного накопленного state.
+     */
+    private val _generation = MutableStateFlow(0)
+    val generation: StateFlow<Int> = _generation.asStateFlow()
+
     fun clear() {
         _temp1.value = emptyList()
         _temp2.value = emptyList()
@@ -70,5 +78,6 @@ object SensorDataBus {
         _accel2X.value = emptyList()
         _accel2Y.value = emptyList()
         _accel2Z.value = emptyList()
+        _generation.value += 1
     }
 }

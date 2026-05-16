@@ -242,7 +242,9 @@ class BluetoothViewModel(
         saveLogJob?.cancel()
         logBuffer.clear(viewModelScope)
         handle[KEY_LOG] = ""
-        lineBuffer.clear()
+        // lineBuffer читается из parseChunk на Dispatchers.Default — синхрон
+        // обязателен, иначе ConcurrentModificationException.
+        synchronized(lineBuffer) { lineBuffer.clear() }
         _sensorData.value = SensorData()
         SensorDataBus.clear()
     }
@@ -368,15 +370,25 @@ class BluetoothViewModel(
     /**
      * Накапливает входящие байты в [lineBuffer], извлекает законченные строки,
      * парсит и публикует значения в [SensorDataBus].
+     *
+     * Работа с [lineBuffer] под synchronized — [clearLog] чистит его с Main,
+     * а этот метод бежит на Dispatchers.Default. StringBuilder не thread-safe.
      */
     private fun parseChunk(chunk: String) {
         // Нормализуем переводы строк: некоторые прошивки шлют только '\r'.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
-        lineBuffer.append(normalised)
+        synchronized(lineBuffer) {
+            lineBuffer.append(normalised)
+        }
         var idx: Int
-        while (lineBuffer.indexOf('\n').also { idx = it } >= 0) {
-            val line = lineBuffer.substring(0, idx).trim()
-            lineBuffer.delete(0, idx + 1)
+        while (true) {
+            val line = synchronized(lineBuffer) {
+                idx = lineBuffer.indexOf('\n')
+                if (idx < 0) return@synchronized null
+                val s = lineBuffer.substring(0, idx).trim()
+                lineBuffer.delete(0, idx + 1)
+                s
+            } ?: break
             if (line.isNotEmpty()) {
                 DataParser.parse(line)?.let { parsed ->
                     _sensorData.update { it.merge(parsed) }

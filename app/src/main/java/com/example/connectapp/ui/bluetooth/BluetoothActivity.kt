@@ -70,6 +70,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -511,7 +512,9 @@ private fun RecordingButton(
 private fun HeartbeatRow(state: ConnectionState, lastPacketAt: Long?) {
     if (state !is ConnectionState.Connected || lastPacketAt == null) return
     // Перетриггер каждую секунду чтобы отображение возраста обновлялось.
-    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    // mutableLongStateOf вместо mutableStateOf<Long> — без auto-boxing
+    // каждый тик (1Hz × bunch of recomposes).
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     // Перетриггерим только при смене Connected/Disconnected — не при каждом
     // полученном пакете, иначе корутина пересоздаётся ~10 раз в секунду.
     LaunchedEffect(Unit) {

@@ -54,6 +54,7 @@ object PdfReporter {
         a2z: List<TimedPoint>
     ): File? {
         val pdf = PdfDocument()
+        var success = false
         try {
             val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, 1).create()
             val page = pdf.startPage(pageInfo)
@@ -70,10 +71,14 @@ object PdfReporter {
 
             pdf.finishPage(page)
             FileOutputStream(outFile).use { pdf.writeTo(it) }
+            success = true
         } catch (_: Throwable) {
             return null
         } finally {
             pdf.close()
+            // Частично записанный файл — мусор. Удаляем, чтобы FileProvider
+            // не отдал битый PDF, и cache не накапливался при повторных фейлах.
+            if (!success) runCatching { outFile.delete() }
         }
         return outFile
     }

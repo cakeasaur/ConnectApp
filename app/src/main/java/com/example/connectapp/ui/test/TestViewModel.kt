@@ -85,18 +85,25 @@ class TestViewModel(
 
     fun clearLog() {
         logBuffer.clear(viewModelScope)
-        lineBuffer.clear()
+        synchronized(lineBuffer) { lineBuffer.clear() }
         _sensorData.value = SensorData()
         SensorDataBus.clear()
     }
 
     private fun parseChunk(chunk: String) {
+        // synchronized — parseChunk бежит на Dispatchers.Default, а clearLog
+        // с Main. StringBuilder не thread-safe.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
-        lineBuffer.append(normalised)
+        synchronized(lineBuffer) { lineBuffer.append(normalised) }
         var idx: Int
-        while (lineBuffer.indexOf('\n').also { idx = it } >= 0) {
-            val line = lineBuffer.substring(0, idx).trim()
-            lineBuffer.delete(0, idx + 1)
+        while (true) {
+            val line = synchronized(lineBuffer) {
+                idx = lineBuffer.indexOf('\n')
+                if (idx < 0) return@synchronized null
+                val s = lineBuffer.substring(0, idx).trim()
+                lineBuffer.delete(0, idx + 1)
+                s
+            } ?: break
             if (line.isNotEmpty()) {
                 DataParser.parse(line)?.let { parsed ->
                     _sensorData.update { it.merge(parsed) }

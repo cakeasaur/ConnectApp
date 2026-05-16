@@ -48,6 +48,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.connectapp.R
 import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.SensorDataBus
@@ -85,9 +89,9 @@ class GraphActivity : ComponentActivity() {
     }
 
     private fun exportPdf() {
-        // Берём ТЕКУЩИЙ снимок данных из SensorDataBus. Не window'им —
-        // отчёт включает ВСЁ окно записи (то что в bus сейчас). Если нужно
-        // окно — пользователь делает CSV-экспорт через window-фильтр.
+        // Снимок данных из SensorDataBus — синхронно на UI потоке (StateFlow.value
+        // дёшево). Сам рендеринг PDF (FFT-256, рисование Canvas, write на диск)
+        // — на Dispatchers.IO, иначе ~50-100мс ANR на крупных сериях.
         val temp1 = SensorDataBus.temp1.value
         val temp2 = SensorDataBus.temp2.value
         val a1x = SensorDataBus.accel1X.value
@@ -96,32 +100,35 @@ class GraphActivity : ComponentActivity() {
         val a2x = SensorDataBus.accel2X.value
         val a2y = SensorDataBus.accel2Y.value
         val a2z = SensorDataBus.accel2Z.value
-        if ((temp1 + temp2 + a1x + a2x).isEmpty()) {
+        if (temp1.isEmpty() && temp2.isEmpty() && a1x.isEmpty() && a2x.isEmpty()) {
             Toast.makeText(this, getString(R.string.graph_no_export_data), Toast.LENGTH_SHORT).show()
             return
         }
-        // Чистим старые PDF — те же правила что для CSV.
-        runCatching {
-            cacheDir.listFiles { f -> f.name.startsWith("sensor_report_") && f.name.endsWith(".pdf") }
-                ?.forEach { it.delete() }
+        lifecycleScope.launch {
+            val file = withContext(Dispatchers.IO) {
+                runCatching {
+                    cacheDir.listFiles { f -> f.name.startsWith("sensor_report_") && f.name.endsWith(".pdf") }
+                        ?.forEach { it.delete() }
+                }
+                val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+                val out = File(cacheDir, "sensor_report_$ts.pdf")
+                com.example.connectapp.utils.PdfReporter.build(
+                    out, temp1, temp2, a1x, a1y, a1z, a2x, a2y, a2z
+                )
+            }
+            if (file == null) {
+                Toast.makeText(this@GraphActivity, "PDF export failed", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val uri = FileProvider.getUriForFile(this@GraphActivity, "$packageName.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, getString(R.string.graph_export_subject))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, getString(R.string.graph_export_intent_title)))
         }
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
-        val file = File(cacheDir, "sensor_report_$timestamp.pdf")
-        val ok = com.example.connectapp.utils.PdfReporter.build(
-            file, temp1, temp2, a1x, a1y, a1z, a2x, a2y, a2z
-        )
-        if (ok == null) {
-            Toast.makeText(this, "PDF export failed", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/pdf"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.graph_export_subject))
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        startActivity(Intent.createChooser(intent, getString(R.string.graph_export_intent_title)))
     }
 
     private fun exportCsv() {
@@ -341,10 +348,15 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
 
             // Раздел "Математический анализ" получает те же отфильтрованные
             // данные что и графики выше — pause/window применяются единообразно.
+            // generation = ключ для stateful-математики (Kalman): инкрементится
+            // в SensorDataBus.clear(), на новом значении сбрасываем накопленный
+            // state, иначе Kalman продолжит "помнить" удалённые отсчёты.
+            val generation by SensorDataBus.generation.collectAsStateWithLifecycle()
             MathSection(
                 t1 = temp1, t2 = temp2,
                 a1x = a1x, a1y = a1y, a1z = a1z,
-                a2x = a2x
+                a2x = a2x,
+                generation = generation
             )
         }
     }

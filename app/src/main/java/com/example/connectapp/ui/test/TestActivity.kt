@@ -71,10 +71,12 @@ class TestActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Если пришли из HistoryActivity с replay-extra — переключаем VM в
-        // file-source режим вместо mock-генератора и сразу стартуем поток.
+        // Replay-режим: только при ПЕРВОМ создании (savedInstanceState == null).
+        // На rotate Activity пересоздаётся с тем же intent — без guard мы
+        // бы перезапустили replay с нуля, забивая то что пользователь успел
+        // остановить кнопкой stop.
         val replayPath = intent?.getStringExtra(EXTRA_REPLAY_FILE)
-        if (!replayPath.isNullOrBlank()) {
+        if (savedInstanceState == null && !replayPath.isNullOrBlank()) {
             viewModel.replayFile = java.io.File(replayPath)
             viewModel.start()
         }

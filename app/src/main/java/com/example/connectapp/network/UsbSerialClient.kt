@@ -8,10 +8,11 @@ import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -68,26 +69,25 @@ class UsbSerialClient {
     }
 
     /**
-     * Поток входящих данных. Блокирующий read() с 200мс timeout — иначе
-     * cancel() корутины может застревать в нативном вызове.
+     * Поток входящих данных. Использует `flow{}` (а не callbackFlow) — read()
+     * блокирующий, нет смысла в обратном вызове. CoroutineScope сам выйдет
+     * из цикла при cancel — `isActive` чек перед read останавливает loop.
+     * 200мс read-timeout — чтобы cancel не висел дольше четверти секунды.
      */
-    fun incoming(): Flow<String> = callbackFlow {
+    fun incoming(): Flow<String> = flow {
         val p = port ?: throw IllegalStateException("USB port не открыт")
         val buffer = ByteArray(2048)
-        try {
-            while (true) {
-                val read = p.read(buffer, 200)
-                if (read > 0) {
-                    trySend(String(buffer, 0, read, StandardCharsets.UTF_8))
-                }
-                // read == 0 → таймаут, продолжаем. read < 0 → ошибка ниже в exception.
+        while (currentCoroutineContext().isActive) {
+            val read = try {
+                p.read(buffer, 200)
+            } catch (_: Throwable) {
+                break  // I/O ошибка или порт закрыт другим методом
             }
-        } catch (_: Throwable) {
-            // I/O ошибка или порт закрыт — выходим, awaitClose почистит.
-        } finally {
-            close()
+            if (read > 0) {
+                emit(String(buffer, 0, read, StandardCharsets.UTF_8))
+            }
+            // read == 0 → таймаут, продолжаем (yield не нужен — есть IO timeout).
         }
-        awaitClose { /* ресурсы освободятся в [close]. */ }
     }.flowOn(Dispatchers.IO)
 
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
