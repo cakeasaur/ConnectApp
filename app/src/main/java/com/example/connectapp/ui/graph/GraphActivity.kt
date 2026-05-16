@@ -57,6 +57,7 @@ import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.compose.chart.line.lineSpec
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
+import com.patrykandpatrick.vico.core.chart.values.AxisValuesOverrider
 import com.patrykandpatrick.vico.core.entry.FloatEntry
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.core.entry.entryOf
@@ -317,17 +318,27 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         lineSpec(lineColor = androidx.compose.ui.graphics.Color(argb))
     }
 
-    // X-ось → mm:ss (или HH:mm:ss если сессия >1 часа).
-    val timeFmt = remember(baseMs) {
-        val pattern = "mm:ss"
+    // Y-авто-зум: Vico по умолчанию ставит Ymin = min(0, dataMin), и температура
+    // 22..27°C превращается в сплющенную полоску у верха. Берём min/max данных
+    // + 10% padding (или ≥ 0.5 ед., чтобы плоская линия не схлопывалась).
+    val allY = nonEmpty.flatMap { it.asSequence().map(TimedPoint::value).toList() }
+    val yMin = allY.min()
+    val yMax = allY.max()
+    val pad = ((yMax - yMin) * 0.1f).coerceAtLeast(0.5f)
+    val yOverrider = remember(yMin, yMax) {
+        AxisValuesOverrider.fixed(minY = yMin - pad, maxY = yMax + pad)
+    }
+
+    // X-метки: секунды от начала ("12s", "24s"). Короткие, не обрезаются
+    // в "06..." как у mm:ss-формата при узком тике.
+    val timeFmt = remember(Unit) {
         AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
-            SimpleDateFormat(pattern, Locale.ROOT)
-                .format(Date(baseMs + (value * 1000f).toLong()))
+            "${value.toInt()}s"
         }
     }
 
     Chart(
-        chart = lineChart(lines = lineSpecs),
+        chart = lineChart(lines = lineSpecs, axisValuesOverrider = yOverrider),
         model = model,
         startAxis = rememberStartAxis(),
         bottomAxis = rememberBottomAxis(valueFormatter = timeFmt),
