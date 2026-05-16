@@ -55,7 +55,6 @@ import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.compose.chart.line.lineSpec
-import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.patrykandpatrick.vico.core.entry.ChartEntry
@@ -265,55 +264,45 @@ private fun ChartCard(height: Int = 220, content: @Composable () -> Unit) {
  * Линейный график на Vico 1.14. Принимает 1..N серий TimedPoint, X-ось = секунды
  * с момента первой точки (Float не вмещает абсолютные 13-значные ms-timestamps).
  *
- * Особенности:
- *  - bottomAxis форматирует X как HH:mm:ss относительно [baseMs] (хранится в state).
- *  - lineColors задают цвета серий: T1/A1=красный, T2/A2=зелёный, A1Z/A2Z=синий.
- *    Для 1 серии — primary, для 2 — red+blue (термометры), для 3 — RGB (X/Y/Z).
+ * Реализация: ChartEntryModelProducer создаётся СРАЗУ с initial-моделью —
+ * без этого Vico не подхватывал последующий setEntries() и график оставался
+ * пустым. baseMs хранится в state, чтобы bottomAxis форматировал HH:mm:ss.
  */
 @Composable
 private fun VicoLineChart(series: List<List<TimedPoint>>) {
-    val producer = remember { ChartEntryModelProducer() }
-    // baseMs нужен и в LaunchedEffect (нормализация X), и в AxisValueFormatter
-    // (обратный перевод в HH:mm:ss). Держим в state, обновляем при смене данных.
+    // Initial seed: одна тривиальная точка. Иначе Vico не показывает данные,
+    // даже если потом сделать setEntries() — нужен initial model.
+    val producer = remember { ChartEntryModelProducer(listOf(entryOf(0f, 0f))) }
     var baseMs by remember { mutableStateOf(0L) }
 
     LaunchedEffect(series) {
         val nonEmpty = series.filter { it.isNotEmpty() }
-        if (nonEmpty.isEmpty()) {
-            producer.setEntries(emptyList<List<ChartEntry>>())
-            return@LaunchedEffect
-        }
+        if (nonEmpty.isEmpty()) return@LaunchedEffect
         baseMs = nonEmpty.flatten().minOf { it.t }
-        val seriesEntries = nonEmpty.map { points ->
+        val seriesEntries: List<List<ChartEntry>> = nonEmpty.map { points ->
             points.map { entryOf((it.t - baseMs).toFloat() / 1000f, it.value) }
         }
+        // setEntries принимает vararg List<List<ChartEntry>> в Vico 1.14.
         producer.setEntries(seriesEntries)
     }
 
-    // Цвета на серии: T-графика 2 серии (красный/синий), Accel 3 серии (красный/зелёный/синий).
-    val seriesColors = when (series.count { it.isNotEmpty() }) {
-        0, 1 -> listOf(android.graphics.Color.rgb(220, 50, 50))
-        2 -> listOf(
-            android.graphics.Color.rgb(220, 50, 50),
-            android.graphics.Color.rgb(50, 100, 220)
-        )
-        else -> listOf(
-            android.graphics.Color.rgb(220, 50, 50),
-            android.graphics.Color.rgb(50, 180, 50),
-            android.graphics.Color.rgb(50, 100, 220)
-        )
+    // Цвета серий: T (2 линии) — red/blue, Accel (3 линии) — RGB.
+    val nLines = series.count { it.isNotEmpty() }.coerceAtLeast(1)
+    val seriesColors = when (nLines) {
+        1 -> listOf(0xFFDC3232)
+        2 -> listOf(0xFFDC3232, 0xFF3264DC)
+        else -> listOf(0xFFDC3232, 0xFF32B432, 0xFF3264DC)
     }
-    val lineSpecs = seriesColors.map { color ->
-        lineSpec(
-            lineColor = androidx.compose.ui.graphics.Color(color),
-            lineBackgroundShader = null
-        )
+    val lineSpecs = seriesColors.map { argb ->
+        lineSpec(lineColor = androidx.compose.ui.graphics.Color(argb))
     }
 
+    // X-ось → HH:mm:ss относительно baseMs.
     val timeFmt = remember(baseMs) {
         AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
-            val ts = baseMs + (value * 1000f).toLong()
-            SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(Date(ts))
+            if (baseMs == 0L) ""
+            else SimpleDateFormat("HH:mm:ss", Locale.ROOT)
+                .format(Date(baseMs + (value * 1000f).toLong()))
         }
     }
 
@@ -321,10 +310,7 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         chart = lineChart(lines = lineSpecs),
         chartModelProducer = producer,
         startAxis = rememberStartAxis(),
-        bottomAxis = rememberBottomAxis(
-            valueFormatter = timeFmt,
-            itemPlacer = AxisItemPlacer.Horizontal.default(spacing = 1, addExtremeLabelPadding = true)
-        ),
+        bottomAxis = rememberBottomAxis(valueFormatter = timeFmt),
         modifier = Modifier.fillMaxSize()
     )
 }
