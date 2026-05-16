@@ -311,10 +311,17 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                     modifier = Modifier.padding(top = 8.dp)
                 )
                 TimeWindow.values().forEach { tw ->
+                    // Явный selectedContainerColor — дефолтный FilterChip в
+                    // тёмной теме слабо отличает selected от unselected,
+                    // оба выглядят прозрачными чипами с обводкой.
                     FilterChip(
                         selected = window == tw,
                         onClick = { window = tw },
-                        label = { Text(tw.label) }
+                        label = { Text(tw.label) },
+                        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     )
                 }
             }
@@ -471,7 +478,13 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         else -> listOf(0xFFDC3232, 0xFF32B432, 0xFF3264DC)
     }
     val lineSpecs = seriesColors.map { argb ->
-        lineSpec(lineColor = androidx.compose.ui.graphics.Color(argb))
+        // lineBackgroundShader = null → отключаем дефолтную полупрозрачную
+        // заливку под линией. Иначе T1 (красная заливка) закрывает T2 на
+        // том же чарте, и видна только тонкая полоска T2 на дне.
+        lineSpec(
+            lineColor = androidx.compose.ui.graphics.Color(argb),
+            lineBackgroundShader = null
+        )
     }
 
     // Y-авто-зум: Vico по умолчанию ставит Ymin = min(0, dataMin), и температура
@@ -485,11 +498,16 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         AxisValuesOverrider.fixed(minY = yMin - pad, maxY = yMax + pad)
     }
 
-    // X-метки: секунды от начала ("12s", "24s"). Короткие, не обрезаются
-    // в "06..." как у mm:ss-формата при узком тике.
-    val timeFmt = remember(Unit) {
+    // X-метки: адаптивно по диапазону данных.
+    //   < 10с  → "0.0s, 0.5s, 1.0s"  (одна десятая — иначе всё "0s")
+    //   ≥ 10с  → "0s, 12s, 24s"       (целые секунды)
+    // Раньше всегда был toInt() → на коротком окне (<1с) ВСЕ метки = "0s".
+    val maxX = nonEmpty.maxOf { (it.last().t - baseMs) / 10L } / 100f
+    val timeFmt = remember(maxX < 10f) {
+        val showDecimal = maxX < 10f
         AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
-            "${value.toInt()}s"
+            if (showDecimal) "%.1fs".format(java.util.Locale.ROOT, value)
+            else "${value.toInt()}s"
         }
     }
 
