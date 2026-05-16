@@ -261,37 +261,54 @@ private fun ChartCard(height: Int = 220, content: @Composable () -> Unit) {
 }
 
 /**
- * Линейный график на Vico 1.14. Принимает 1..N серий TimedPoint, X-ось = секунды
- * с момента первой точки (Float не вмещает абсолютные 13-значные ms-timestamps).
+ * Линейный график на Vico 1.14. Принимает 1..N серий TimedPoint.
  *
- * Использует **синхронную** модель `entryModelOf(...)` напрямую, не
- * ChartEntryModelProducer + setEntries(). Почему: при множественных Vico-чартах
- * на одном экране (T + A1 + A2) async-producer схлопывался — рисовался только
- * последний chart. Синхронный путь надёжнее: каждый recompose пересчитывает
- * модель, Vico видит свежие данные через `model = ...` параметр.
+ * X-ось = СЕКУНДЫ относительно baseMs, КВАНТИЗОВАННЫЕ до 0.01с (10мс).
+ * Почему квантизация: Vico 1.14 кидает IllegalArgumentException("x values are
+ * too precise. Maximum precision is two decimal places") если у X >2 знаков
+ * после запятой. (t - baseMs) / 1000f даёт 3-знаковые значения — крашит весь
+ * экран графиков.
+ *
+ * Также де-дублируем точки с одинаковым квантизованным X: Vico требует
+ * строго возрастающую X-последовательность, иначе IllegalArgumentException.
+ *
+ * Модель — синхронная entryModelOf(...). Async ChartEntryModelProducer
+ * страдал тем же x-precision крашем, но молча (исключение в корутине), и
+ * визуально график оставался пустым.
  */
 @Composable
 private fun VicoLineChart(series: List<List<TimedPoint>>) {
     val nonEmpty = series.filter { it.isNotEmpty() }
-    val baseMs = if (nonEmpty.isEmpty()) 0L else nonEmpty.flatten().minOf { it.t }
-
-    // entryModelOf(vararg List<FloatEntry>) — мульти-серийная модель.
-    // При пустых данных — одна серия с одной seed-точкой, чтобы Vico
-    // нарисовал пустую сетку с осями вместо «No data».
-    val model = remember(series) {
-        if (nonEmpty.isEmpty()) {
-            entryModelOf(listOf<FloatEntry>(entryOf(0f, 0f)))
-        } else {
-            val seriesArr: Array<List<FloatEntry>> = nonEmpty.map { points ->
-                points.map { entryOf((it.t - baseMs).toFloat() / 1000f, it.value) }
-            }.toTypedArray()
-            entryModelOf(*seriesArr)
+    if (nonEmpty.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            Text(
+                "нет данных — запусти monitor",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+        return
     }
 
-    // Цвета серий: T (2 линии) — red/blue, Accel (3 линии) — RGB.
-    val nLines = nonEmpty.size.coerceAtLeast(1)
-    val seriesColors = when (nLines) {
+    val baseMs = nonEmpty.minOf { it.first().t }
+
+    // Квантизация: (t - base) ms → centiseconds (Long) → Float секунды с 2 знаками.
+    // distinctBy(x) — Vico требует уникальные строго возрастающие X.
+    // Список уже отсортирован по времени (добавляется только в конец).
+    val model = remember(nonEmpty, baseMs) {
+        val seriesArr: Array<List<FloatEntry>> = nonEmpty.map { points ->
+            val seen = HashSet<Float>(points.size)
+            points.mapNotNull { p ->
+                val cs = (p.t - baseMs) / 10L  // 10ms-кванты
+                val x = cs.toFloat() / 100f    // секунды × 100 → 2 знака
+                if (seen.add(x)) entryOf(x, p.value) else null
+            }.takeIf { it.isNotEmpty() } ?: listOf(entryOf(0f, points.first().value))
+        }.toTypedArray()
+        entryModelOf(*seriesArr)
+    }
+
+    // Цвета серий: T (1-2 линии) — red/blue, Accel (3) — R/G/B.
+    val seriesColors = when (nonEmpty.size) {
         1 -> listOf(0xFFDC3232)
         2 -> listOf(0xFFDC3232, 0xFF3264DC)
         else -> listOf(0xFFDC3232, 0xFF32B432, 0xFF3264DC)
@@ -300,11 +317,11 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         lineSpec(lineColor = androidx.compose.ui.graphics.Color(argb))
     }
 
-    // X-ось → mm:ss относительно baseMs. Короче чем HH:mm:ss — не обрезается.
+    // X-ось → mm:ss (или HH:mm:ss если сессия >1 часа).
     val timeFmt = remember(baseMs) {
+        val pattern = "mm:ss"
         AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
-            if (baseMs == 0L) ""
-            else SimpleDateFormat("mm:ss", Locale.ROOT)
+            SimpleDateFormat(pattern, Locale.ROOT)
                 .format(Date(baseMs + (value * 1000f).toLong()))
         }
     }
