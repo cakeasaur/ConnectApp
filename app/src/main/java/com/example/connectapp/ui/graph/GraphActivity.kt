@@ -408,6 +408,7 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         model = model,
         startAxis = rememberStartAxis(),
         bottomAxis = rememberBottomAxis(valueFormatter = timeFmt),
+        marker = rememberChartMarker(),
         modifier = Modifier.fillMaxSize()
     )
 }
