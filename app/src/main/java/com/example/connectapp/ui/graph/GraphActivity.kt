@@ -57,8 +57,8 @@ import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.compose.chart.line.lineSpec
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
-import com.patrykandpatrick.vico.core.entry.ChartEntry
-import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
+import com.patrykandpatrick.vico.core.entry.FloatEntry
+import com.patrykandpatrick.vico.core.entry.entryModelOf
 import com.patrykandpatrick.vico.core.entry.entryOf
 import java.io.File
 import java.text.SimpleDateFormat
@@ -264,30 +264,33 @@ private fun ChartCard(height: Int = 220, content: @Composable () -> Unit) {
  * Линейный график на Vico 1.14. Принимает 1..N серий TimedPoint, X-ось = секунды
  * с момента первой точки (Float не вмещает абсолютные 13-значные ms-timestamps).
  *
- * Реализация: ChartEntryModelProducer создаётся СРАЗУ с initial-моделью —
- * без этого Vico не подхватывал последующий setEntries() и график оставался
- * пустым. baseMs хранится в state, чтобы bottomAxis форматировал HH:mm:ss.
+ * Использует **синхронную** модель `entryModelOf(...)` напрямую, не
+ * ChartEntryModelProducer + setEntries(). Почему: при множественных Vico-чартах
+ * на одном экране (T + A1 + A2) async-producer схлопывался — рисовался только
+ * последний chart. Синхронный путь надёжнее: каждый recompose пересчитывает
+ * модель, Vico видит свежие данные через `model = ...` параметр.
  */
 @Composable
 private fun VicoLineChart(series: List<List<TimedPoint>>) {
-    // Initial seed: одна тривиальная точка. Иначе Vico не показывает данные,
-    // даже если потом сделать setEntries() — нужен initial model.
-    val producer = remember { ChartEntryModelProducer(listOf(entryOf(0f, 0f))) }
-    var baseMs by remember { mutableStateOf(0L) }
+    val nonEmpty = series.filter { it.isNotEmpty() }
+    val baseMs = if (nonEmpty.isEmpty()) 0L else nonEmpty.flatten().minOf { it.t }
 
-    LaunchedEffect(series) {
-        val nonEmpty = series.filter { it.isNotEmpty() }
-        if (nonEmpty.isEmpty()) return@LaunchedEffect
-        baseMs = nonEmpty.flatten().minOf { it.t }
-        val seriesEntries: List<List<ChartEntry>> = nonEmpty.map { points ->
-            points.map { entryOf((it.t - baseMs).toFloat() / 1000f, it.value) }
+    // entryModelOf(vararg List<FloatEntry>) — мульти-серийная модель.
+    // При пустых данных — одна серия с одной seed-точкой, чтобы Vico
+    // нарисовал пустую сетку с осями вместо «No data».
+    val model = remember(series) {
+        if (nonEmpty.isEmpty()) {
+            entryModelOf(listOf<FloatEntry>(entryOf(0f, 0f)))
+        } else {
+            val seriesArr: Array<List<FloatEntry>> = nonEmpty.map { points ->
+                points.map { entryOf((it.t - baseMs).toFloat() / 1000f, it.value) }
+            }.toTypedArray()
+            entryModelOf(*seriesArr)
         }
-        // setEntries принимает vararg List<List<ChartEntry>> в Vico 1.14.
-        producer.setEntries(seriesEntries)
     }
 
     // Цвета серий: T (2 линии) — red/blue, Accel (3 линии) — RGB.
-    val nLines = series.count { it.isNotEmpty() }.coerceAtLeast(1)
+    val nLines = nonEmpty.size.coerceAtLeast(1)
     val seriesColors = when (nLines) {
         1 -> listOf(0xFFDC3232)
         2 -> listOf(0xFFDC3232, 0xFF3264DC)
@@ -297,9 +300,7 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         lineSpec(lineColor = androidx.compose.ui.graphics.Color(argb))
     }
 
-    // X-ось → mm:ss относительно baseMs. Короче чем HH:mm:ss и поэтому не
-    // обрезается до '15...' на узких метках. HH здесь не критично — пользователь
-    // смотрит на относительное время монитор-сессии, не на абсолютное.
+    // X-ось → mm:ss относительно baseMs. Короче чем HH:mm:ss — не обрезается.
     val timeFmt = remember(baseMs) {
         AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
             if (baseMs == 0L) ""
@@ -310,7 +311,7 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
 
     Chart(
         chart = lineChart(lines = lineSpecs),
-        chartModelProducer = producer,
+        model = model,
         startAxis = rememberStartAxis(),
         bottomAxis = rememberBottomAxis(valueFormatter = timeFmt),
         modifier = Modifier.fillMaxSize()
