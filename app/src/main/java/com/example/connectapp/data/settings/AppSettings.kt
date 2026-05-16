@@ -21,7 +21,9 @@ data class AppSettings(
     /** Терминатор для исходящих команд. CRLF = безопасный дефолт для большинства MCU. */
     val lineEnding: LineEnding = LineEnding.CRLF,
     /** Если включено — поле «Сообщение» парсит ввод как HEX-байты ("AA 55 01"). */
-    val hexSendMode: Boolean = false
+    val hexSendMode: Boolean = false,
+    /** Набор кастомных чипов-команд над полем ввода. Редактируется в Настройках. */
+    val quickCommands: List<QuickCommand> = QuickCommand.DEFAULT
 ) {
     companion object {
         val DEFAULT = AppSettings()

@@ -13,6 +13,7 @@ import com.example.connectapp.data.repository.BluetoothRepository
 import com.example.connectapp.data.settings.AppSettings
 import com.example.connectapp.data.settings.ConnectionHistoryEntry
 import com.example.connectapp.data.settings.LineEnding
+import com.example.connectapp.data.settings.QuickCommand
 import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
@@ -246,6 +247,38 @@ class BluetoothViewModel(
         viewModelScope.launch { settingsRepo.setLineEnding(value) }
     fun setHexSendMode(value: Boolean) =
         viewModelScope.launch { settingsRepo.setHexSendMode(value) }
+    fun setQuickCommands(list: List<QuickCommand>) =
+        viewModelScope.launch { settingsRepo.setQuickCommands(list) }
+
+    /**
+     * Отправить кастомную quick-команду. В отличие от [send], решение
+     * "HEX или text" берётся ИЗ САМОЙ команды (cmd.hex), а не из глобальной
+     * настройки hexSendMode. Это даёт смешанный набор: текстовые '1'/'help'
+     * рядом с бинарным "AA 55 FF" — каждая отправляется как надо.
+     */
+    fun sendQuick(cmd: QuickCommand) {
+        if (cmd.hex) {
+            val bytes = HexCodec.parse(cmd.payload)
+            if (bytes == null) {
+                logBuffer.appendLine(
+                    "← [ERROR] invalid HEX in quick '${cmd.label}': ${cmd.payload}",
+                    viewModelScope
+                )
+                scheduleSave()
+                return
+            }
+            logBuffer.appendLine("→ HEX [${cmd.label}] ${HexCodec.encode(bytes)}", viewModelScope)
+            scheduleSave()
+            viewModelScope.launch {
+                repo.sendBytes(bytes).onFailure { e ->
+                    logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
+                    scheduleSave()
+                }
+            }
+        } else {
+            sendText(cmd.payload)
+        }
+    }
 
     /**
      * Калибровка акселерометров — отправляем команду '2' и слушаем 8 секунд

@@ -34,8 +34,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Insights
@@ -53,6 +55,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -146,6 +149,7 @@ private fun BluetoothScreen(
     var filter by remember { mutableStateOf("") }
     var hexMode by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var quickCmdsOpen by remember { mutableStateOf(false) }
     var calibOpen by remember { mutableStateOf(false) }
 
     val enableBtLauncher = rememberLauncherForActivityResult(
@@ -211,7 +215,16 @@ private fun BluetoothScreen(
             onAutoScroll = viewModel::setAutoScrollLog,
             onTheme = viewModel::setDarkTheme,
             onLineEnding = viewModel::setLineEnding,
-            onHexSend = viewModel::setHexSendMode
+            onHexSend = viewModel::setHexSendMode,
+            onEditQuickCommands = { quickCmdsOpen = true }
+        )
+    }
+
+    if (quickCmdsOpen) {
+        QuickCommandsDialog(
+            initial = settings.quickCommands,
+            onSave = { viewModel.setQuickCommands(it) },
+            onDismiss = { quickCmdsOpen = false }
         )
     }
 
@@ -350,8 +363,13 @@ private fun BluetoothScreen(
                 )
             }
 
-            // sendText() — quick-команды всегда text-mode, иначе в HEX-режиме '1' падал.
-            CommandChips(enabled = connected, onCommand = { viewModel.sendText(it) })
+            // Чипы кастомных команд — readonly view, редактируется в Настройках.
+            // sendQuick() читает hex/text из самой команды (не из глобальной настройки).
+            CommandChips(
+                commands = settings.quickCommands,
+                enabled = connected,
+                onCommand = { viewModel.sendQuick(it) }
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -516,7 +534,8 @@ private fun SettingsDialog(
     onAutoScroll: (Boolean) -> Unit,
     onTheme: (Boolean?) -> Unit,
     onLineEnding: (LineEnding) -> Unit,
-    onHexSend: (Boolean) -> Unit
+    onHexSend: (Boolean) -> Unit,
+    onEditQuickCommands: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -551,9 +570,150 @@ private fun SettingsDialog(
                 ThemeChips(current = settings.darkTheme, onChange = onTheme)
                 Text(stringResource(R.string.settings_terminator), style = MaterialTheme.typography.labelLarge)
                 LineEndingChips(current = settings.lineEnding, onChange = onLineEnding)
+                // Кастомные команды — отдельный диалог-редактор, открываемый
+                // отсюда. Здесь только summary + кнопка.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.settings_quick_commands),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Text(
+                            stringResource(R.string.quick_cmd_summary, settings.quickCommands.size),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = onEditQuickCommands) {
+                        Text(stringResource(R.string.quick_cmd_edit))
+                    }
+                }
             }
         }
     )
+}
+
+/**
+ * Редактор кастомных быстрых команд.
+ *
+ * UX: список с inline-редактированием (label, payload, HEX toggle) +
+ * кнопка удалить (мини-крестик). Внизу — "Добавить", "По умолчанию",
+ * "Сохранить", "Отмена". Изменения держим в локальном state и публикуем
+ * в DataStore только по "Сохранить" — даёт пользователю отмену.
+ */
+@Composable
+private fun QuickCommandsDialog(
+    initial: List<com.example.connectapp.data.settings.QuickCommand>,
+    onSave: (List<com.example.connectapp.data.settings.QuickCommand>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var edited by remember(initial) { mutableStateOf(initial) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                // Отфильтруем пустые строки — иначе будут чипы-призраки.
+                val cleaned = edited.filter { it.label.isNotBlank() && it.payload.isNotBlank() }
+                onSave(cleaned)
+                onDismiss()
+            }) { Text(stringResource(R.string.quick_cmd_save)) }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = {
+                    edited = com.example.connectapp.data.settings.QuickCommand.DEFAULT
+                }) { Text(stringResource(R.string.quick_cmd_reset)) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.quick_cmd_cancel)) }
+            }
+        },
+        title = { Text(stringResource(R.string.quick_cmd_title)) },
+        text = {
+            Column {
+                if (edited.isEmpty()) {
+                    Text(
+                        stringResource(R.string.quick_cmd_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        edited.forEachIndexed { i, cmd ->
+                            QuickCommandRow(
+                                cmd = cmd,
+                                onChange = { newCmd ->
+                                    edited = edited.toMutableList().also { it[i] = newCmd }
+                                },
+                                onDelete = {
+                                    edited = edited.toMutableList().also { it.removeAt(i) }
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                FilledTonalButton(
+                    onClick = {
+                        edited = edited + com.example.connectapp.data.settings.QuickCommand("new", "")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.quick_cmd_add))
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun QuickCommandRow(
+    cmd: com.example.connectapp.data.settings.QuickCommand,
+    onChange: (com.example.connectapp.data.settings.QuickCommand) -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        OutlinedTextField(
+            value = cmd.label,
+            onValueChange = { onChange(cmd.copy(label = it)) },
+            label = { Text(stringResource(R.string.quick_cmd_label)) },
+            modifier = Modifier.weight(1f),
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = cmd.payload,
+            onValueChange = { onChange(cmd.copy(payload = it)) },
+            label = { Text(stringResource(R.string.quick_cmd_payload)) },
+            modifier = Modifier.weight(1.3f),
+            singleLine = true
+        )
+        FilterChip(
+            selected = cmd.hex,
+            onClick = { onChange(cmd.copy(hex = !cmd.hex)) },
+            label = { Text(stringResource(R.string.quick_cmd_hex)) }
+        )
+        IconButton(onClick = onDelete) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = stringResource(R.string.quick_cmd_delete),
+                tint = MaterialTheme.colorScheme.error
+            )
+        }
+    }
 }
 
 @Composable
@@ -850,20 +1010,12 @@ private fun DeviceRow(device: BluetoothDeviceItem, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CommandChips(enabled: Boolean, onCommand: (String) -> Unit) {
-    // Команды под прошивку PIC24FJ128GB106 Sensor Monitor:
-    //   меню boot — '1'/'2'/'3'  (enhanced monitoring / calibrate / quick test)
-    //   UART menu — echo / help / clear / freq / test
-    val commands = listOf(
-        stringResource(R.string.cmd_one),
-        stringResource(R.string.cmd_two),
-        stringResource(R.string.cmd_three),
-        stringResource(R.string.cmd_help),
-        stringResource(R.string.cmd_echo),
-        stringResource(R.string.cmd_clear),
-        stringResource(R.string.cmd_freq),
-        stringResource(R.string.cmd_test)
-    )
+private fun CommandChips(
+    commands: List<com.example.connectapp.data.settings.QuickCommand>,
+    enabled: Boolean,
+    onCommand: (com.example.connectapp.data.settings.QuickCommand) -> Unit
+) {
+    if (commands.isEmpty()) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -874,7 +1026,11 @@ private fun CommandChips(enabled: Boolean, onCommand: (String) -> Unit) {
             AssistChip(
                 onClick = { onCommand(cmd) },
                 enabled = enabled,
-                label = { Text(cmd) }
+                label = {
+                    // Префикс "▮ " (квадратик) для HEX-команд — визуально отличает
+                    // от обычных текстовых.
+                    Text(if (cmd.hex) "▮ ${cmd.label}" else cmd.label)
+                }
             )
         }
     }

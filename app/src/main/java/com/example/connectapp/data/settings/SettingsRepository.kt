@@ -24,7 +24,8 @@ class SettingsRepository(private val context: Context) {
             lineEnding = prefs[KEY_LINE_ENDING]?.let { name ->
                 runCatching { LineEnding.valueOf(name) }.getOrDefault(AppSettings.DEFAULT.lineEnding)
             } ?: AppSettings.DEFAULT.lineEnding,
-            hexSendMode = prefs[KEY_HEX_SEND] ?: AppSettings.DEFAULT.hexSendMode
+            hexSendMode = prefs[KEY_HEX_SEND] ?: AppSettings.DEFAULT.hexSendMode,
+            quickCommands = QuickCommand.decodeList(prefs[KEY_QUICK_CMDS])
         )
     }
 
@@ -41,6 +42,8 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[KEY_LINE_ENDING] = value.name }
     suspend fun setHexSendMode(value: Boolean) =
         context.settingsDataStore.edit { it[KEY_HEX_SEND] = value }
+    suspend fun setQuickCommands(list: List<QuickCommand>) =
+        context.settingsDataStore.edit { it[KEY_QUICK_CMDS] = QuickCommand.encodeList(list) }
 
     /** Поток истории подключений: `"name|MAC"`, разделители `;`. */
     val connectionHistory: Flow<List<ConnectionHistoryEntry>> =
@@ -73,6 +76,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_LINE_ENDING: Preferences.Key<String> = stringPreferencesKey("line_ending")
         private val KEY_HISTORY: Preferences.Key<String> = stringPreferencesKey("conn_history")
         private val KEY_HEX_SEND: Preferences.Key<Boolean> = booleanPreferencesKey("hex_send")
+        private val KEY_QUICK_CMDS: Preferences.Key<String> = stringPreferencesKey("quick_commands")
     }
 }
 

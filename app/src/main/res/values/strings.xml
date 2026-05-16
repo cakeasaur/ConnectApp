@@ -104,17 +104,27 @@
     <string name="log_view_text">Text</string>
     <string name="log_view_hex">Hex</string>
 
-    <!-- Quick commands (отправляются устройству, не локализуются).
-         Под прошивку PIC24FJ128GB106 Sensor Monitor: меню Boot 1/2/3
-         и UART menu echo/help/clear/freq/test. -->
-    <string name="cmd_help" translatable="false">help</string>
-    <string name="cmd_echo" translatable="false">echo</string>
-    <string name="cmd_clear" translatable="false">clear</string>
-    <string name="cmd_freq" translatable="false">freq</string>
-    <string name="cmd_test" translatable="false">test</string>
+    <!-- Boot-меню PIC24 1/2/3 — используются на экране Графиков (auto-monitor,
+         calibrate, quick test). UART-menu команды (echo/help/clear/freq/test)
+         теперь редактируются в Настройках через QuickCommandsDialog. -->
     <string name="cmd_one" translatable="false">1</string>
     <string name="cmd_two" translatable="false">2</string>
     <string name="cmd_three" translatable="false">3</string>
+
+    <!-- Quick commands -->
+    <string name="settings_quick_commands">Быстрые команды</string>
+    <string name="quick_cmd_edit">Редактировать команды</string>
+    <string name="quick_cmd_summary">%1$d команд</string>
+    <string name="quick_cmd_title">Быстрые команды</string>
+    <string name="quick_cmd_label">название</string>
+    <string name="quick_cmd_payload">payload</string>
+    <string name="quick_cmd_hex">HEX</string>
+    <string name="quick_cmd_add">Добавить</string>
+    <string name="quick_cmd_delete">Удалить</string>
+    <string name="quick_cmd_reset">По умолчанию</string>
+    <string name="quick_cmd_save">Сохранить</string>
+    <string name="quick_cmd_cancel">Отмена</string>
+    <string name="quick_cmd_empty">Нет команд. Добавь первую — будет чип над полем ввода.</string>
 
     <!-- Терминатор отправляемых команд -->
     <string name="settings_terminator">Терминатор команд</string>
