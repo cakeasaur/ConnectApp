@@ -54,6 +54,21 @@
     <string name="device_bonded">Сопряжено</string>
     <string name="device_found">Найдено</string>
 
+    <!-- История подключений -->
+    <string name="history_label">Недавние</string>
+    <string name="history_clear">Очистить историю</string>
+
+    <!-- Calibration -->
+    <string name="btn_calibrate">Калибровка</string>
+    <string name="calib_title">Калибровка акселерометров</string>
+    <string name="calib_starting">Отправляю команду…</string>
+    <string name="calib_close">Закрыть</string>
+
+    <!-- Hex send -->
+    <string name="settings_hex_send">Отправлять как HEX (\"AA 55 01\")</string>
+    <string name="hex_send_hint">HEX-байты через пробел (AA 55 01 FF)</string>
+    <string name="hex_send_invalid">Неверный HEX: %1$s</string>
+
     <!-- Graphs -->
     <string name="graph_title">Графики датчиков</string>
     <string name="graph_export_csv">CSV</string>

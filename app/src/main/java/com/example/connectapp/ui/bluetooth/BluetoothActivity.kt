@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Settings
@@ -85,6 +86,7 @@ import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.settings.AppSettings
+import com.example.connectapp.data.settings.ConnectionHistoryEntry
 import com.example.connectapp.data.settings.LineEnding
 import com.example.connectapp.ui.graph.GraphActivity
 import com.example.connectapp.ui.theme.ConnectAppTheme
@@ -138,11 +140,13 @@ private fun BluetoothScreen(
     val lastPacketAt by viewModel.lastPacketAt.collectAsStateWithLifecycle()
     val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
     val recordingFile by viewModel.recordingFile.collectAsStateWithLifecycle()
+    val history by viewModel.connectionHistory.collectAsStateWithLifecycle()
 
     var payload by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("") }
     var hexMode by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var calibOpen by remember { mutableStateOf(false) }
 
     val enableBtLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -206,7 +210,19 @@ private fun BluetoothScreen(
             onAutoMonitor = viewModel::setAutoMonitor,
             onAutoScroll = viewModel::setAutoScrollLog,
             onTheme = viewModel::setDarkTheme,
-            onLineEnding = viewModel::setLineEnding
+            onLineEnding = viewModel::setLineEnding,
+            onHexSend = viewModel::setHexSendMode
+        )
+    }
+
+    if (calibOpen) {
+        val calibLog by viewModel.calibrationLog.collectAsStateWithLifecycle()
+        val calibRunning by viewModel.calibrationRunning.collectAsStateWithLifecycle()
+        CalibrationDialog(
+            log = calibLog,
+            running = calibRunning,
+            onStart = { viewModel.runCalibration() },
+            onDismiss = { calibOpen = false; viewModel.resetCalibrationLog() }
         )
     }
 
@@ -234,6 +250,9 @@ private fun BluetoothScreen(
                             }
                         }
                     )
+                    IconButton(onClick = { calibOpen = true }) {
+                        Icon(Icons.Filled.GpsFixed, contentDescription = stringResource(R.string.btn_calibrate))
+                    }
                     IconButton(onClick = { settingsOpen = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.settings_title))
                     }
@@ -314,12 +333,21 @@ private fun BluetoothScreen(
                     Spacer(Modifier.height(8.dp))
                     DeviceList(
                         devices = devices,
-                        onClick = { viewModel.connect(it.address) },
+                        onClick = { viewModel.connect(it.address, it.name) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 60.dp, max = 220.dp)
                     )
                 }
+            }
+
+            // История подключений — компактный ряд chip'ов с последними 5 устройствами.
+            if (history.isNotEmpty()) {
+                HistoryRow(
+                    items = history,
+                    onSelect = { viewModel.connect(it.address, it.name) },
+                    onClear = { viewModel.clearHistory() }
+                )
             }
 
             CommandChips(enabled = connected, onCommand = { viewModel.send(it) })
@@ -332,7 +360,12 @@ private fun BluetoothScreen(
                 OutlinedTextField(
                     value = payload,
                     onValueChange = { payload = it },
-                    label = { Text(stringResource(R.string.hint_payload)) },
+                    label = {
+                        Text(
+                            if (settings.hexSendMode) stringResource(R.string.hex_send_hint)
+                            else stringResource(R.string.hint_payload)
+                        )
+                    },
                     singleLine = true,
                     enabled = connected,
                     modifier = Modifier.weight(1f)
@@ -480,7 +513,8 @@ private fun SettingsDialog(
     onAutoMonitor: (Boolean) -> Unit,
     onAutoScroll: (Boolean) -> Unit,
     onTheme: (Boolean?) -> Unit,
-    onLineEnding: (LineEnding) -> Unit
+    onLineEnding: (LineEnding) -> Unit,
+    onHexSend: (Boolean) -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -506,10 +540,62 @@ private fun SettingsDialog(
                     checked = settings.autoScrollLog,
                     onChange = onAutoScroll
                 )
+                SwitchRow(
+                    label = stringResource(R.string.settings_hex_send),
+                    checked = settings.hexSendMode,
+                    onChange = onHexSend
+                )
                 Text(stringResource(R.string.settings_dark_theme), style = MaterialTheme.typography.labelLarge)
                 ThemeChips(current = settings.darkTheme, onChange = onTheme)
                 Text(stringResource(R.string.settings_terminator), style = MaterialTheme.typography.labelLarge)
                 LineEndingChips(current = settings.lineEnding, onChange = onLineEnding)
+            }
+        }
+    )
+}
+
+@Composable
+private fun CalibrationDialog(
+    log: String,
+    running: Boolean,
+    onStart: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onStart, enabled = !running) {
+                Text(if (running) stringResource(R.string.calib_starting) else stringResource(R.string.btn_calibrate))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.calib_close)) }
+        },
+        title = { Text(stringResource(R.string.calib_title)) },
+        text = {
+            Column {
+                Text(
+                    "Положите плату горизонтально и нажмите «Калибровка». " +
+                        "Команда «2» уйдёт на плату, ответ — ниже.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 80.dp, max = 200.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = log.ifEmpty { "— нет ответа —" },
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    )
+                }
             }
         }
     )
@@ -632,6 +718,45 @@ private fun SensorTile(icon: ImageVector, label: String, value: String) {
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onTertiaryContainer
             )
+        }
+    }
+}
+
+@Composable
+private fun HistoryRow(
+    items: List<ConnectionHistoryEntry>,
+    onSelect: (ConnectionHistoryEntry) -> Unit,
+    onClear: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.history_label),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onClear) {
+                    Text(stringResource(R.string.history_clear))
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items.forEach { entry ->
+                    AssistChip(
+                        onClick = { onSelect(entry) },
+                        label = { Text(entry.name) }
+                    )
+                }
+            }
         }
     }
 }

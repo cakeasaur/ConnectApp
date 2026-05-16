@@ -11,10 +11,12 @@ import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.repository.BluetoothRepository
 import com.example.connectapp.data.settings.AppSettings
+import com.example.connectapp.data.settings.ConnectionHistoryEntry
 import com.example.connectapp.data.settings.LineEnding
 import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
+import com.example.connectapp.utils.HexCodec
 import com.example.connectapp.utils.LogBuffer
 import com.example.connectapp.utils.SessionRecorder
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +28,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -111,10 +114,27 @@ class BluetoothViewModel(
     fun startDiscovery() = repo.startDiscovery()
     fun stopDiscovery() = repo.stopDiscovery()
 
-    fun connect(address: String) {
+    fun connect(address: String, name: String? = null) {
         lastAddress = address
         repo.connect(address, viewModelScope)
+        // Запоминаем в истории (имя из bonded или из аргумента, или сам MAC).
+        val displayName = name
+            ?: repo.devices.value.firstOrNull { it.address == address }?.name
+            ?: address
+        viewModelScope.launch {
+            settingsRepo.pushConnection(ConnectionHistoryEntry(displayName, address))
+        }
     }
+
+    /** Стрим истории подключений для UI. */
+    val connectionHistory: StateFlow<List<ConnectionHistoryEntry>> =
+        settingsRepo.connectionHistory.stateIn(
+            scope = viewModelScope,
+            started = kotlinx.coroutines.flow.SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
+
+    fun clearHistory() = viewModelScope.launch { settingsRepo.clearHistory() }
 
     /** Однократная попытка авто-реконнекта при первом запуске экрана. */
     fun maybeAutoReconnect() {
@@ -134,13 +154,37 @@ class BluetoothViewModel(
         viewModelScope.launch { repo.disconnect() }
     }
 
-    /** Send a message and echo it to the log (user-initiated). */
+    /**
+     * Send a message and echo it to the log (user-initiated).
+     * Если в настройках включён HEX-режим — payload интерпретируется как HEX-байты
+     * ("AA 55 01") и отправляется бинарно, без терминатора.
+     */
     fun send(payload: String) {
+        if (_settings.value.hexSendMode) {
+            sendHex(payload); return
+        }
         logBuffer.appendLine("→ $payload", viewModelScope)
         scheduleSave()
         val terminated = payload + _settings.value.lineEnding.suffix
         viewModelScope.launch {
             repo.send(terminated).onFailure { e ->
+                logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
+                scheduleSave()
+            }
+        }
+    }
+
+    private fun sendHex(input: String) {
+        val bytes = HexCodec.parse(input)
+        if (bytes == null) {
+            logBuffer.appendLine("← [ERROR] invalid HEX: $input", viewModelScope)
+            scheduleSave()
+            return
+        }
+        logBuffer.appendLine("→ HEX ${HexCodec.encode(bytes)}", viewModelScope)
+        scheduleSave()
+        viewModelScope.launch {
+            repo.sendBytes(bytes).onFailure { e ->
                 logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
                 scheduleSave()
             }
@@ -180,6 +224,49 @@ class BluetoothViewModel(
         viewModelScope.launch { settingsRepo.setDarkTheme(value) }
     fun setLineEnding(value: LineEnding) =
         viewModelScope.launch { settingsRepo.setLineEnding(value) }
+    fun setHexSendMode(value: Boolean) =
+        viewModelScope.launch { settingsRepo.setHexSendMode(value) }
+
+    /**
+     * Калибровка акселерометров — отправляем команду '2' и слушаем 5 секунд
+     * ответы платы. Результат накапливается в [calibrationLog].
+     */
+    private val _calibrationLog = MutableStateFlow("")
+    val calibrationLog: StateFlow<String> = _calibrationLog.asStateFlow()
+    private val _calibrationRunning = MutableStateFlow(false)
+    val calibrationRunning: StateFlow<Boolean> = _calibrationRunning.asStateFlow()
+
+    fun runCalibration() {
+        if (_calibrationRunning.value) return
+        if (state.value !is ConnectionState.Connected) {
+            _calibrationLog.value = "Сначала подключитесь к плате"
+            return
+        }
+        _calibrationRunning.value = true
+        _calibrationLog.value = ""
+        viewModelScope.launch {
+            // Подписываемся на incoming на ~6 сек и собираем ответы платы.
+            val collector = launch {
+                repo.incoming.collect { chunk ->
+                    _calibrationLog.update { it + chunk }
+                }
+            }
+            // Отправляем команду '2' с настроенным терминатором.
+            val cmd = getApplication<Application>().getString(
+                com.example.connectapp.R.string.cmd_two
+            ) + _settings.value.lineEnding.suffix
+            repo.send(cmd).onFailure { e ->
+                _calibrationLog.update { it + "\n[ERROR] ${e.message ?: "send failed"}\n" }
+            }
+            delay(6000)
+            collector.cancel()
+            _calibrationRunning.value = false
+        }
+    }
+
+    fun resetCalibrationLog() {
+        _calibrationLog.value = ""
+    }
 
     private fun scheduleSave() {
         saveLogJob?.cancel()
