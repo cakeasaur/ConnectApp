@@ -73,10 +73,14 @@ class WifiClient {
      * слой — у разных устройств он разный (\n / \r / \r\n / отсутствует).
      */
     suspend fun send(payload: String) = withContext(Dispatchers.IO) {
-        // Mutex prevents concurrent writes from interleaving at the byte level.
+        sendBytes(payload.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    /** Отправляет сырые байты — для HEX/бинарных протоколов. */
+    suspend fun sendBytes(bytes: ByteArray) = withContext(Dispatchers.IO) {
         sendMutex.withLock {
             val out = output ?: throw IllegalStateException("Socket is not connected")
-            out.write(payload.toByteArray(StandardCharsets.UTF_8))
+            out.write(bytes)
             out.flush()
         }
     }

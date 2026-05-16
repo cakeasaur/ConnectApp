@@ -19,7 +19,9 @@ data class AppSettings(
     /** Принудительная тёмная тема (true) / системная (null) / светлая (false). */
     val darkTheme: Boolean? = true,
     /** Терминатор для исходящих команд. CRLF = безопасный дефолт для большинства MCU. */
-    val lineEnding: LineEnding = LineEnding.CRLF
+    val lineEnding: LineEnding = LineEnding.CRLF,
+    /** Если включено — поле «Сообщение» парсит ввод как HEX-байты ("AA 55 01"). */
+    val hexSendMode: Boolean = false
 ) {
     companion object {
         val DEFAULT = AppSettings()
