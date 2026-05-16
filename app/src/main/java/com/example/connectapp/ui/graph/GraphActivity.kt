@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -27,6 +28,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -136,15 +138,42 @@ class GraphActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
-    val temp1 by SensorDataBus.temp1.collectAsStateWithLifecycle()
-    val temp2 by SensorDataBus.temp2.collectAsStateWithLifecycle()
-    val a1x by SensorDataBus.accel1X.collectAsStateWithLifecycle()
-    val a1y by SensorDataBus.accel1Y.collectAsStateWithLifecycle()
-    val a1z by SensorDataBus.accel1Z.collectAsStateWithLifecycle()
-    val a2x by SensorDataBus.accel2X.collectAsStateWithLifecycle()
-    val a2y by SensorDataBus.accel2Y.collectAsStateWithLifecycle()
-    val a2z by SensorDataBus.accel2Z.collectAsStateWithLifecycle()
+    // Live-данные с шины. Дальше прогоняем через snapshotWhen(paused) и
+    // applyWindow(window) — фильтры применяются и к графикам, и к MathSection.
+    val temp1Live by SensorDataBus.temp1.collectAsStateWithLifecycle()
+    val temp2Live by SensorDataBus.temp2.collectAsStateWithLifecycle()
+    val a1xLive by SensorDataBus.accel1X.collectAsStateWithLifecycle()
+    val a1yLive by SensorDataBus.accel1Y.collectAsStateWithLifecycle()
+    val a1zLive by SensorDataBus.accel1Z.collectAsStateWithLifecycle()
+    val a2xLive by SensorDataBus.accel2X.collectAsStateWithLifecycle()
+    val a2yLive by SensorDataBus.accel2Y.collectAsStateWithLifecycle()
+    val a2zLive by SensorDataBus.accel2Z.collectAsStateWithLifecycle()
+
     var monitoring by remember { mutableStateOf(false) }
+    var paused by remember { mutableStateOf(false) }
+    var window by remember { mutableStateOf(TimeWindow.ALL) }
+
+    // 1) Freeze: при paused = true возвращаем снимок, снятый в момент перехода.
+    val temp1Snap = snapshotWhen(paused, temp1Live)
+    val temp2Snap = snapshotWhen(paused, temp2Live)
+    val a1xSnap = snapshotWhen(paused, a1xLive)
+    val a1ySnap = snapshotWhen(paused, a1yLive)
+    val a1zSnap = snapshotWhen(paused, a1zLive)
+    val a2xSnap = snapshotWhen(paused, a2xLive)
+    val a2ySnap = snapshotWhen(paused, a2yLive)
+    val a2zSnap = snapshotWhen(paused, a2zLive)
+
+    // 2) Window: показываем только хвост длиной window.ms (0 = всё).
+    //    remember с ключом (snap, windowMs) — не пересчитываем если данные те же.
+    val windowMs = window.ms
+    val temp1 = remember(temp1Snap, windowMs) { applyWindow(temp1Snap, windowMs) }
+    val temp2 = remember(temp2Snap, windowMs) { applyWindow(temp2Snap, windowMs) }
+    val a1x = remember(a1xSnap, windowMs) { applyWindow(a1xSnap, windowMs) }
+    val a1y = remember(a1ySnap, windowMs) { applyWindow(a1ySnap, windowMs) }
+    val a1z = remember(a1zSnap, windowMs) { applyWindow(a1zSnap, windowMs) }
+    val a2x = remember(a2xSnap, windowMs) { applyWindow(a2xSnap, windowMs) }
+    val a2y = remember(a2ySnap, windowMs) { applyWindow(a2ySnap, windowMs) }
+    val a2z = remember(a2zSnap, windowMs) { applyWindow(a2zSnap, windowMs) }
 
     Scaffold(
         topBar = {
@@ -156,6 +185,18 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                     }
                 },
                 actions = {
+                    // Pause — заморозить графики и stats на текущем кадре, чтобы
+                    // успеть прочитать значения, пока поток идёт. Снежинка → нажата.
+                    IconButton(onClick = { paused = !paused }) {
+                        Icon(
+                            Icons.Filled.AcUnit,
+                            contentDescription = stringResource(
+                                if (paused) R.string.graph_resume else R.string.graph_pause
+                            ),
+                            tint = if (paused) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                     IconButton(onClick = onExport) {
                         Icon(Icons.Filled.FileDownload, contentDescription = stringResource(R.string.graph_export_csv))
                     }
@@ -202,6 +243,23 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                 }
             }
 
+            // Window selector — фильтр по времени для всех графиков и stats.
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    stringResource(R.string.graph_window_label),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                TimeWindow.values().forEach { tw ->
+                    FilterChip(
+                        selected = window == tw,
+                        onClick = { window = tw },
+                        label = { Text(tw.label) }
+                    )
+                }
+            }
+
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
             TempStatsRow("T1", temp1)
             TempStatsRow("T2", temp2)
@@ -233,10 +291,13 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                 )
             }
 
-            // Раздел "Математический анализ": FFT, vibration stats, tilt,
-            // cross-correlation, heat flux, Kalman fusion. Питается от того
-            // же SensorDataBus, поэтому работает одинаково с BT и Wi-Fi.
-            MathSection()
+            // Раздел "Математический анализ" получает те же отфильтрованные
+            // данные что и графики выше — pause/window применяются единообразно.
+            MathSection(
+                t1 = temp1, t2 = temp2,
+                a1x = a1x, a1y = a1y, a1z = a1z,
+                a2x = a2x
+            )
         }
     }
 }

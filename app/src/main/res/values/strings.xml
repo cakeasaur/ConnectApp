@@ -73,6 +73,9 @@
     <string name="graph_no_export_data">Нет данных для экспорта</string>
     <string name="graph_export_intent_title">Экспорт данных</string>
     <string name="graph_export_subject">Данные датчиков ConnectApp</string>
+    <string name="graph_pause">Заморозить графики</string>
+    <string name="graph_resume">Продолжить</string>
+    <string name="graph_window_label">окно:</string>
 
     <!-- Heartbeat / sensor stats -->
     <string name="hb_just_now">только что</string>

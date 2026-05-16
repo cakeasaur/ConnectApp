@@ -26,8 +26,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.math.CrossCorrelation
 import com.example.connectapp.math.Fft
@@ -57,16 +55,14 @@ private const val SAMPLE_RATE_HZ = 10f
  * Итого <2 мс на полный пересчёт — Compose 60 fps не страдает.
  */
 @Composable
-fun MathSection() {
-    val t1 by SensorDataBus.temp1.collectAsStateWithLifecycle()
-    val t2 by SensorDataBus.temp2.collectAsStateWithLifecycle()
-    val a1x by SensorDataBus.accel1X.collectAsStateWithLifecycle()
-    val a1y by SensorDataBus.accel1Y.collectAsStateWithLifecycle()
-    val a1z by SensorDataBus.accel1Z.collectAsStateWithLifecycle()
-    val a2x by SensorDataBus.accel2X.collectAsStateWithLifecycle()
-    // a2y/a2z пока не нужны для математических карточек (tilt считается
-    // только для A1). Не собираем, чтобы не плодить лишние recompose.
-
+fun MathSection(
+    t1: List<TimedPoint>,
+    t2: List<TimedPoint>,
+    a1x: List<TimedPoint>,
+    a1y: List<TimedPoint>,
+    a1z: List<TimedPoint>,
+    a2x: List<TimedPoint>
+) {
     Spacer(Modifier.height(8.dp))
     Text("Математический анализ", style = MaterialTheme.typography.titleLarge)
     Text(
