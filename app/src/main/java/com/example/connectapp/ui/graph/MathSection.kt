@@ -67,6 +67,7 @@ fun MathSection(
     a1y: List<TimedPoint>,
     a1z: List<TimedPoint>,
     a2x: List<TimedPoint>,
+    a2y: List<TimedPoint>,
     generation: Int = 0
 ) {
     Spacer(Modifier.height(8.dp))
@@ -92,6 +93,12 @@ fun MathSection(
 
     Text("Ориентация (наклон A1)", style = MaterialTheme.typography.titleMedium)
     TiltCard(a1x, a1y, a1z)
+
+    Text(
+        "Orbit / Lissajous (фазовые портреты)",
+        style = MaterialTheme.typography.titleMedium
+    )
+    OrbitTripletCard(a1x = a1x, a1y = a1y, a2x = a2x, a2y = a2y)
 
     Text("Cross-correlation ax1 ↔ ax2", style = MaterialTheme.typography.titleMedium)
     CrossCorrCard(a1x, a2x)

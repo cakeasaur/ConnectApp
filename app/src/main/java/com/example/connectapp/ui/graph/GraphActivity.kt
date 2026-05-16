@@ -355,7 +355,7 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
             MathSection(
                 t1 = temp1, t2 = temp2,
                 a1x = a1x, a1y = a1y, a1z = a1z,
-                a2x = a2x,
+                a2x = a2x, a2y = a2y,
                 generation = generation
             )
         }
