@@ -27,23 +27,36 @@ object MockDataSource {
         trySend("Starting enhanced monitoring at 10 Hz\n")
         delay(300)
 
-        // 2) CSV-поток.
+        // 2) CSV-поток. Сигналы подобраны так, чтобы математика показывала
+        //    осмысленные результаты:
+        //    - T1, T2: разница ~3°C → ненулевой тепловой поток (Фурье).
+        //    - ax1, ax2: общая вибрация 2.0 Hz + сдвиг фазы 200мс между
+        //      датчиками → cross-correlation находит лаг = 2 отсчёта (при 10 Hz).
+        //    - az ≈ 1000 LSB (гравитация) → tilt-индикатор показывает 0°.
         var counter = 0
         val t0 = System.currentTimeMillis()
         try {
             while (true) {
                 val ts = (System.currentTimeMillis() - t0) / 1000.0
-                val temp1 = 25.0 + 2.0 * sin(ts * 0.3) + Random.nextDouble(-0.05, 0.05)
-                val temp2 = 25.0 + 1.5 * sin(ts * 0.3 + PI / 6) + Random.nextDouble(-0.05, 0.05)
 
-                // Акселерометр #1: лёгкое покачивание + 1g по Z
-                val ax1 = (500 * sin(ts * 1.7)).toInt()
-                val ay1 = (500 * cos(ts * 1.7)).toInt()
+                // Температура: T1 повыше (источник тепла), T2 пониже → q > 0.
+                val temp1 = 27.0 + 0.5 * sin(ts * 0.3) + Random.nextDouble(-0.05, 0.05)
+                val temp2 = 24.0 + 0.5 * sin(ts * 0.3 + PI / 6) + Random.nextDouble(-0.05, 0.05)
+
+                // Общая вибрация — синус 2 Hz, амплитуда 80 LSB.
+                // Поверх — медленное покачивание 0.27 Hz, амплитуда 400 LSB.
+                val vib = 80.0 * sin(2.0 * PI * 2.0 * ts)
+                val vibDelayed = 80.0 * sin(2.0 * PI * 2.0 * (ts - 0.2)) // 200мс лаг
+
+                // Акселерометр #1
+                val ax1 = (400 * sin(ts * 1.7) + vib + Random.nextDouble(-5.0, 5.0)).toInt()
+                val ay1 = (400 * cos(ts * 1.7)).toInt()
                 val az1 = 1000 + Random.nextInt(-20, 20)
 
-                // Акселерометр #2: другой паттерн (как будто на второй стороне платы)
-                val ax2 = (300 * sin(ts * 2.3 + PI / 4)).toInt()
-                val ay2 = (300 * cos(ts * 2.3 + PI / 4)).toInt()
+                // Акселерометр #2 — общая вибрация с задержкой + свой паттерн +
+                // постоянное смещение -5 LSB на ax (демонстрация Kalman fusion).
+                val ax2 = (250 * sin(ts * 2.3 + PI / 4) + vibDelayed - 5 + Random.nextDouble(-7.0, 7.0)).toInt()
+                val ay2 = (250 * cos(ts * 2.3 + PI / 4)).toInt()
                 val az2 = 1000 + Random.nextInt(-15, 15)
 
                 val line = "%d;%.2f;%.2f;%d,%d,%d;%d,%d,%d;\n".format(

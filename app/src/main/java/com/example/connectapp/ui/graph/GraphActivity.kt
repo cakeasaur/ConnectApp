@@ -232,6 +232,11 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit) {
                     modifier = Modifier.fillMaxSize()
                 )
             }
+
+            // Раздел "Математический анализ": FFT, vibration stats, tilt,
+            // cross-correlation, heat flux, Kalman fusion. Питается от того
+            // же SensorDataBus, поэтому работает одинаково с BT и Wi-Fi.
+            MathSection()
         }
     }
 }
