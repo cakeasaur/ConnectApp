@@ -65,14 +65,19 @@ fun ChartWithCrosshair(
         content()
         // Overlay tap-детектор. fillMaxSize — иначе тап в zoom-area Vico
         // конкурирует с pan-gestures Vico (но у нас scroll выключен → ок).
+        // pointerInput key — Unit (handler-замыкание не зависит от данных,
+        // ищем minT/maxT в момент тапа). С ключом по nonEmpty.size детектор
+        // перезапускался когда серий становилось больше → терялся
+        // незавершённый gesture. Тут handler стабилен — Unit достаточно.
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(nonEmpty.size) {
+                .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        if (nonEmpty.isEmpty()) return@detectTapGestures
-                        val minT = nonEmpty.minOf { it.first.first().t }
-                        val maxT = nonEmpty.maxOf { it.first.last().t }
+                        val ne = seriesData.filter { it.first.isNotEmpty() }
+                        if (ne.isEmpty()) return@detectTapGestures
+                        val minT = ne.minOf { it.first.first().t }
+                        val maxT = ne.maxOf { it.first.last().t }
                         if (maxT <= minT) return@detectTapGestures
                         val frac = (offset.x / size.width).coerceIn(0f, 1f)
                         bus.selectedT = minT + (frac * (maxT - minT)).toLong()

@@ -13,7 +13,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -48,9 +52,13 @@ private val GridLine = Color(0xFF1A3320)
 /**
  * Хранит ring-buffer фреймов сигнала между recompose'ами. Привязан к
  * [remember] с ключом generation — пересоздаётся при clear() bus'а.
+ *
+ * frames доступен напрямую (val) — рендер итерирует по нему БЕЗ
+ * toList()-копии, что критично на горячем пути (была аллокация на
+ * каждый recompose × 2 чтения).
  */
 private class PersistenceBuffer(val maxFrames: Int, val frameSize: Int) {
-    private val frames = ArrayDeque<FloatArray>(maxFrames)
+    val frames = ArrayDeque<FloatArray>(maxFrames)
     private var lastT = Long.MIN_VALUE
 
     /** Добавляет новый snapshot если пришли новые данные. */
@@ -64,8 +72,6 @@ private class PersistenceBuffer(val maxFrames: Int, val frameSize: Int) {
         frames.addLast(frame)
         if (frames.size > maxFrames) frames.removeFirst()
     }
-
-    val snapshot: List<FloatArray> get() = frames.toList()
 }
 
 @Composable
@@ -92,13 +98,18 @@ fun PersistenceCard(
 
     // Persistent state — переживает recompose, сбрасывается с generation.
     val buffer = remember(generation) { PersistenceBuffer(MAX_FRAMES, FRAME_SIZE) }
-    // ingest на каждый recompose: дёшево (1 проход по N), без аллокации
-    // если данные не сдвинулись.
     val lastT = series.last().t
-    remember(lastT) {
+    // tick — счётчик "версии" буфера; читается ниже чтобы Canvas пере-
+    // отрисовался когда ingest обновил frames. Side-effect — в LaunchedEffect
+    // (НЕ в remember{}, там запрещено побочное состояние — composition
+    // может быть отменена и состояние рассинхронится).
+    var tick by remember(generation) { mutableIntStateOf(0) }
+    LaunchedEffect(lastT) {
         buffer.ingest(series)
-        lastT
+        tick++
     }
+    // Касание tick внутри композиции — чтобы Canvas re-recomposed при апдейте.
+    @Suppress("UNUSED_VARIABLE") val _tick = tick
 
     Card(
         modifier = modifier.fillMaxWidth().height(180.dp),
@@ -106,7 +117,7 @@ fun PersistenceCard(
     ) {
         Column(Modifier.padding(8.dp).fillMaxSize()) {
             Text(
-                "PERSISTENCE · ${buffer.snapshot.size}/$MAX_FRAMES traces · $FRAME_SIZE samples/frame",
+                "PERSISTENCE · ${buffer.frames.size}/$MAX_FRAMES traces · $FRAME_SIZE samples/frame",
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 color = PhosphorGreen.copy(alpha = 0.7f)
@@ -117,7 +128,7 @@ fun PersistenceCard(
                     .padding(top = 4.dp)
                     .background(ScopeBackground)
             ) {
-                PersistenceCanvas(buffer.snapshot)
+                PersistenceCanvas(buffer.frames)
                 // Scope-метка "10 div / 8 div" в правом верхнем углу.
                 Text(
                     "DIV 10×8",
@@ -132,7 +143,7 @@ fun PersistenceCard(
 }
 
 @Composable
-private fun PersistenceCanvas(frames: List<FloatArray>) {
+private fun PersistenceCanvas(frames: ArrayDeque<FloatArray>) {
     Canvas(Modifier.fillMaxSize()) {
         val w = size.width
         val h = size.height

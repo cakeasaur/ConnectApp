@@ -136,15 +136,24 @@ private fun OrbitCanvas(
     val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
     val axisColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
 
-    // Подготавливаем подмассивы за пределами Canvas — иначе аллокации на
-    // каждый кадр гестур-хендлера (нет, тут без gestures, но всё равно).
+    // Подготавливаем подмассивы за пределами Canvas — пары формируем
+    // ПО TIMESTAMP, не по индексу. Иначе если xs и ys имеют разные размеры
+    // (потеря пакетов, разный rate) — Lissajous пары не соответствуют
+    // одному моменту времени, и фигура неинформативна.
     val tail = remember(n, xs.lastOrNull()?.t, ys.lastOrNull()?.t) {
         val count = min(n, ORBIT_TRAIL)
         if (count < 2) return@remember null
         val fromX = xs.size - count
-        val fromY = ys.size - count
-        val tx = FloatArray(count) { xs[fromX + it].value }
-        val ty = FloatArray(count) { ys[fromY + it].value }
+        val tx = FloatArray(count)
+        val ty = FloatArray(count)
+        for (i in 0 until count) {
+            val xPoint = xs[fromX + i]
+            tx[i] = xPoint.value
+            // Парный отсчёт ys — ближайший по timestamp. Для одной CSV-строки
+            // ts одинаковый → берётся ровно тот же индекс; при рассинхронизации
+            // получаем правильную временную привязку.
+            ty[i] = (findNearest(ys, xPoint.t) ?: xPoint).value
+        }
         var maxAbs = MIN_BOUND
         for (v in tx) if (abs(v) > maxAbs) maxAbs = abs(v)
         for (v in ty) if (abs(v) > maxAbs) maxAbs = abs(v)

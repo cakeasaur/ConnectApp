@@ -47,7 +47,11 @@ import java.util.Locale
  */
 private const val FFT_SIZE = 64        // 64 samples / 10Hz = 6.4s окно
 private const val MAX_COLUMNS = 200    // ~20с истории при 100мс шаге
-private const val STEP_SAMPLES = 4     // 50% overlap → плотный водопад
+// hop = 4 sample = 93.75% overlap. Плотный водопад — каждый новый
+// отсчёт сдвигает окно на 1 столбец, видна плавная эволюция спектра.
+// (Классический STFT использует hop = FFT_SIZE/2 = 32 для 50% overlap;
+// мы делаем гораздо плотнее для красоты.)
+private const val STEP_SAMPLES = 4
 
 @Composable
 fun SpectrogramCard(
@@ -60,16 +64,24 @@ fun SpectrogramCard(
         return
     }
 
-    // Пересчёт спектрограммы при каждом изменении данных. Ключ — last().t
-    // и size, чтобы invalidate только когда реально новые точки пришли.
-    val lastT = series.last().t
+    // Pre-allocated bitmap + pixel-буфер — переживают recompose, заполняются
+    // на месте. Раньше каждый recompose делал Bitmap.createBitmap (25KB
+    // ARGB) + IntArray(6400) → ~250 КБ/сек churn в native bitmap heap.
     val freqBins = FFT_SIZE / 2
-    val bitmap = remember(series.size, lastT) {
-        buildSpectrogramBitmap(series, freqBins)
+    val bitmap = remember { android.graphics.Bitmap.createBitmap(MAX_COLUMNS, freqBins, android.graphics.Bitmap.Config.ARGB_8888) }
+    val pixelBuf = remember { IntArray(MAX_COLUMNS * freqBins) }
+
+    val lastT = series.last().t
+    // Перерасчёт при изменении данных. Заполнение идемпотентно (одни и те
+    // же данные → один результат), поэтому side-effect в remember безопасен
+    // даже при отмене composition. Возвращаемое значение нужно только для
+    // того чтобы блок реально перевыполнился по новому ключу.
+    remember(series.size, lastT) {
+        fillSpectrogramBitmap(bitmap, pixelBuf, series, freqBins)
     }
 
     val nyquist = sampleRateHz / 2f
-    val peakHz = remember(bitmap) { findPeakFreq(series, sampleRateHz) }
+    val peakHz = remember(series.size, lastT) { findPeakFreq(series, sampleRateHz) }
 
     Card(
         modifier = modifier.fillMaxWidth().height(220.dp),
@@ -128,18 +140,28 @@ fun SpectrogramCard(
 // ============================================================
 
 /**
- * Считает [MAX_COLUMNS] окон STFT с конца [series] (новейшее последнее).
- * Использует hop = [STEP_SAMPLES] (50% overlap при [FFT_SIZE]=64).
+ * Заполняет переиспользуемый [bitmap] спектрограммой по [series].
+ * Все аллокации — только в self-arg ([pixelBuf]); bitmap shape = MAX_COLUMNS×freqBins.
+ *
+ * Если новых данных меньше чем MAX_COLUMNS окон — левая часть заливается
+ * чёрным (clear).
  *
  * Нормализация: один глобальный max по всем колонкам → 0..1 → LUT(turbo).
+ * Bin=0 (DC) пропущен — иначе гравитационная компонента (~1000 LSB на az)
+ * прибивает всё остальное.
  */
-private fun buildSpectrogramBitmap(series: List<TimedPoint>, freqBins: Int): Bitmap {
-    // Сколько окон поместится в буфер.
+private fun fillSpectrogramBitmap(
+    bitmap: Bitmap,
+    pixelBuf: IntArray,
+    series: List<TimedPoint>,
+    freqBins: Int
+) {
+    // Сколько окон поместится: округление сверху на маленьких series.
     val maxStartIdx = series.size - FFT_SIZE
     val totalWindows = (maxStartIdx / STEP_SAMPLES) + 1
     val nCols = minOf(MAX_COLUMNS, totalWindows.coerceAtLeast(1))
 
-    // Колонки от старых к новым: индекс начала окна = maxStartIdx - (nCols-1-col)*STEP_SAMPLES
+    // Считаем спектры N последних окон.
     val columns = Array(nCols) { col ->
         val start = (maxStartIdx - (nCols - 1 - col) * STEP_SAMPLES).coerceAtLeast(0)
         val arr = FloatArray(FFT_SIZE)
@@ -147,29 +169,27 @@ private fun buildSpectrogramBitmap(series: List<TimedPoint>, freqBins: Int): Bit
         Fft.amplitudeSpectrum(arr)
     }
 
-    // Global max for normalization. Без bin=0 (DC) — иначе нормализация
-    // прибита DC-компонентой и все полосы плохо различимы.
+    // Global max for normalization (без DC).
     var maxAmp = 1e-6f
     for (col in columns) {
         for (i in 1 until col.size) if (col[i] > maxAmp) maxAmp = col[i]
     }
-
-    // Bitmap: ширина = nCols, высота = freqBins. Заполняем int[] и одним
-    // вызовом setPixels — быстрее чем setPixel по одному.
-    val bmp = Bitmap.createBitmap(nCols, freqBins, Bitmap.Config.ARGB_8888)
-    val pixels = IntArray(nCols * freqBins)
     val invMax = 1f / maxAmp
+
+    // Если nCols < MAX_COLUMNS, левая часть бufера зануляется — иначе
+    // на previous поколении могли остаться "хвосты".
+    java.util.Arrays.fill(pixelBuf, android.graphics.Color.BLACK)
+    val offsetCol = MAX_COLUMNS - nCols  // новые колонки прижаты к правому краю
     for (col in 0 until nCols) {
         val spectrum = columns[col]
         for (row in 0 until freqBins) {
             val amp = (spectrum.getOrElse(row) { 0f } * invMax).coerceIn(0f, 1f)
-            // Low-freq внизу: pixel row = freqBins-1-row (bitmap row 0 = top).
+            // Low-freq внизу: pixel row = freqBins-1-row.
             val pixelRow = freqBins - 1 - row
-            pixels[pixelRow * nCols + col] = TurboLut.colorFor(amp)
+            pixelBuf[pixelRow * MAX_COLUMNS + offsetCol + col] = TurboLut.colorFor(amp)
         }
     }
-    bmp.setPixels(pixels, 0, nCols, 0, 0, nCols, freqBins)
-    return bmp
+    bitmap.setPixels(pixelBuf, 0, MAX_COLUMNS, 0, 0, MAX_COLUMNS, freqBins)
 }
 
 private fun findPeakFreq(series: List<TimedPoint>, sampleRateHz: Float): Float {

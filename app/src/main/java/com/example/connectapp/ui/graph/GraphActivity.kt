@@ -498,7 +498,9 @@ private fun VicoLineChart(series: List<List<TimedPoint>>) {
         model = model,
         startAxis = rememberStartAxis(),
         bottomAxis = rememberBottomAxis(valueFormatter = timeFmt),
-        marker = rememberChartMarker(),
+        // Marker отключён — ChartWithCrosshair overlay перехватывает тапы,
+        // и Vico marker всё равно не сработал бы. Crosshair даёт ТУ ЖЕ
+        // функцию плюс синхронизацию по 3 чартам — строгое улучшение.
         modifier = Modifier.fillMaxSize()
     )
 }
