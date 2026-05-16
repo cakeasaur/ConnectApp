@@ -183,9 +183,13 @@ private fun BluetoothScreen(
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        val granted = result.isNotEmpty() && result.values.all { it }
-        if (granted) {
+    ) { _ ->
+        // Проверяем по факту, КАКИЕ права остались отозванными — не doverying
+        // booleanам в result (там могут быть и optional как POST_NOTIFICATIONS).
+        val btMissing = PermissionHelper.missing(ctx, PermissionHelper.bluetoothPermissions())
+        if (btMissing.isEmpty()) {
+            // Notifications могут быть отозваны — fg-service всё равно работает,
+            // просто без иконки в шторке. Не блокируем экран.
             ensureBluetoothEnabled()
         } else {
             Toast.makeText(ctx, ctx.getString(R.string.toast_bluetooth_perms_required), Toast.LENGTH_LONG).show()
@@ -194,7 +198,12 @@ private fun BluetoothScreen(
     }
 
     LaunchedEffect(Unit) {
-        val needed = PermissionHelper.missing(ctx, PermissionHelper.bluetoothPermissions())
+        // BT permissions + POST_NOTIFICATIONS (для foreground service на Android 13+).
+        // Спрашиваем одним диалогом — пользователь не путается.
+        val needed = PermissionHelper.missing(
+            ctx,
+            PermissionHelper.bluetoothPermissions() + PermissionHelper.notificationPermissions()
+        )
         if (needed.isEmpty()) ensureBluetoothEnabled() else permissionLauncher.launch(needed)
     }
 

@@ -5,6 +5,15 @@
     <!-- Wi-Fi / TCP -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Foreground service: чтобы Android не убил процесс при сворачивании
+         приложения с активным BT/Wi-Fi соединением. CONNECTED_DEVICE — тип
+         сервиса, обязателен на API 34+ для работы с BT/USB-периферией. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- POST_NOTIFICATIONS — Android 13+ для показа foreground-уведомления.
+         Без неё сервис всё равно работает, но иконки в шторке не видно. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Bluetooth: legacy (for API < 31, ignored on 31+) -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
@@ -81,6 +90,14 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Foreground service для долгих BT/Wi-Fi сессий — держит процесс
+             живым при сворачивании приложения. Тип connectedDevice требуется
+             на Android 14+. -->
+        <service
+            android:name=".service.ConnectionForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
     </application>
 

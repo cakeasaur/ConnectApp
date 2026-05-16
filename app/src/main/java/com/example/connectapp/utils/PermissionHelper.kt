@@ -19,6 +19,15 @@ object PermissionHelper {
         )
     }
 
+    /**
+     * POST_NOTIFICATIONS — runtime-разрешение для Android 13+ (TIRAMISU).
+     * Нужно для показа foreground-service notification. На API < 33 пусто.
+     */
+    fun notificationPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS)
+        } else emptyArray()
+
     // Wi-Fi не нуждается в runtime-разрешениях: INTERNET — install-time,
     // выдаётся автоматически при установке. Отдельный метод только путал.
 

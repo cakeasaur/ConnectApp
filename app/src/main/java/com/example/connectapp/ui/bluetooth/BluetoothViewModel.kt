@@ -15,6 +15,7 @@ import com.example.connectapp.data.settings.ConnectionHistoryEntry
 import com.example.connectapp.data.settings.LineEnding
 import com.example.connectapp.data.settings.QuickCommand
 import com.example.connectapp.data.settings.SettingsRepository
+import com.example.connectapp.service.ConnectionForegroundService
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.DataParser
 import com.example.connectapp.utils.HexCodec
@@ -88,24 +89,38 @@ class BluetoothViewModel(
                 if (state.value is ConnectionState.Connected) sendSilent(cmd)
             }
         }
-        // Auto-monitor: при ПЕРЕХОДЕ в Connected (если включено) отправляем «1»
-        // — команда «Start enhanced monitoring» в boot-меню PIC24FJ128GB106.
+        // Auto-monitor + foreground service: при ПЕРЕХОДЕ в Connected
+        // запускаем оба эффекта одним watcher'ом. Foreground service
+        // держит процесс живым (иначе при сворачивании Android убьёт BT-
+        // соединение через ~2 мин). Останавливаем когда становимся
+        // не-Connected (Idle/Error/Reconnecting/Disconnected).
         //
-        // Важно: слушаем именно ПЕРЕХОД not-Connected → Connected, а не каждое
-        // появление Connected в state. Иначе при цикле auto-reconnect
-        // (Connecting → Connected → Reconnecting → Connected) команда уходит
-        // дважды; PIC firmware интерпретирует второе '1' как stop, и монитор
-        // молча выключается.
+        // Auto-monitor шлёт '1' только при ПЕРЕХОДЕ not-Connected → Connected
+        // (не на каждое появление Connected), иначе при auto-reconnect цикле
+        // PIC firmware получает '1' дважды и интерпретирует второе как stop.
         viewModelScope.launch {
             var wasConnected = false
             state.collect { s ->
                 val nowConnected = s is ConnectionState.Connected
                 val transition = nowConnected && !wasConnected
                 wasConnected = nowConnected
-                if (transition && _settings.value.autoMonitor) {
-                    // Задержка чтобы плата успела выпустить boot-меню и быть в режиме приёма.
-                    delay(300)
-                    sendSilent(application.getString(com.example.connectapp.R.string.cmd_one))
+                if (transition) {
+                    // Запуск foreground service.
+                    val title = application.getString(
+                        com.example.connectapp.R.string.fg_title_bt,
+                        lastAddress ?: "—"
+                    )
+                    ConnectionForegroundService.start(application, title)
+                    if (_settings.value.autoMonitor) {
+                        // Задержка чтобы плата успела выпустить boot-меню и быть в режиме приёма.
+                        delay(300)
+                        sendSilent(application.getString(com.example.connectapp.R.string.cmd_one))
+                    }
+                } else if (!nowConnected) {
+                    // Остановка fg-service при любом не-Connected состоянии,
+                    // включая Reconnecting — иначе пользователь видит "Соединение
+                    // активно" пока на самом деле уже разорвано.
+                    ConnectionForegroundService.stop(application)
                 }
             }
         }
@@ -395,6 +410,9 @@ class BluetoothViewModel(
         handle[KEY_LOG] = logBuffer.text.value
         recorder.shutdown()
         repo.release()
+        // VM умирает — сервис тоже стопаем, иначе остаётся "висячий"
+        // notification без активного соединения.
+        ConnectionForegroundService.stop(getApplication())
     }
 
     companion object {

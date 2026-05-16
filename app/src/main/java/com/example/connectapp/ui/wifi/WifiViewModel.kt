@@ -8,6 +8,7 @@ import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.repository.WifiRepository
 import com.example.connectapp.data.settings.AppSettings
 import com.example.connectapp.data.settings.SettingsRepository
+import com.example.connectapp.service.ConnectionForegroundService
 import com.example.connectapp.utils.Constants
 import com.example.connectapp.utils.LogBuffer
 import kotlinx.coroutines.Job
@@ -48,6 +49,26 @@ class WifiViewModel(
             repo.incoming.collect { chunk ->
                 logBuffer.appendRaw(chunk, viewModelScope)
                 scheduleSave()
+            }
+        }
+        // Foreground service на жизненном цикле Connected. Запускаем
+        // именно на переходе not-Connected → Connected, чтобы при
+        // мерцании состояния не было лишних старт/стопов.
+        viewModelScope.launch {
+            var wasConnected = false
+            state.collect { s ->
+                val nowConnected = s is ConnectionState.Connected
+                val transition = nowConnected && !wasConnected
+                wasConnected = nowConnected
+                if (transition) {
+                    val title = application.getString(
+                        com.example.connectapp.R.string.fg_title_wifi,
+                        "${host}:${port}"
+                    )
+                    ConnectionForegroundService.start(application, title)
+                } else if (!nowConnected) {
+                    ConnectionForegroundService.stop(application)
+                }
             }
         }
     }
@@ -97,6 +118,7 @@ class WifiViewModel(
         saveLogJob?.cancel()
         logBuffer.flush()
         handle[KEY_LOG] = logBuffer.text.value
+        ConnectionForegroundService.stop(getApplication())
     }
 
     companion object {
