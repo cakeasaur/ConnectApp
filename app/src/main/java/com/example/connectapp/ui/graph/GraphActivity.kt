@@ -326,47 +326,52 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                 }
             }
 
+            // Neon-палитра — насыщенные неоновые цвета поверх тёмного фона
+            // карточки. Не путать с цветами серий в Vico (FF3232 / 3264DC):
+            // здесь они подобраны под dark BG для максимальной читаемости.
+            val tempColors = listOf(Color(0xFFFF6B6B), Color(0xFF4FC3F7))
+            val accelColors = listOf(Color(0xFFFF5252), Color(0xFF69F0AE), Color(0xFF40C4FF))
+
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
             TempStatsRow("T1", temp1)
             TempStatsRow("T2", temp2)
-            ChartCard {
-                ChartWithCrosshair(
-                    seriesData = listOf(
-                        Triple(temp1, Color(0xFFDC3232), "T1"),
-                        Triple(temp2, Color(0xFF3264DC), "T2"),
+            ChartCard(height = 220) {
+                NeonChart(
+                    seriesList = listOf(
+                        NeonSeries(temp1, tempColors[0], "T1"),
+                        NeonSeries(temp2, tempColors[1], "T2"),
                     ),
-                    bus = crosshair
-                ) {
-                    VicoLineChart(series = listOf(temp1, temp2).filter { it.isNotEmpty() })
-                }
+                    crosshair = crosshair,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 1", style = MaterialTheme.typography.titleLarge)
-            ChartCard {
-                ChartWithCrosshair(
-                    seriesData = listOf(
-                        Triple(a1x, Color(0xFFDC3232), "ax"),
-                        Triple(a1y, Color(0xFF32B432), "ay"),
-                        Triple(a1z, Color(0xFF3264DC), "az"),
+            ChartCard(height = 220) {
+                // Multi-axis: az → правая ось (диапазон ~900-1100 от гравитации),
+                // ax/ay → левая (±50). Без этого ax/ay сплющены в линию.
+                NeonChart(
+                    seriesList = listOf(
+                        NeonSeries(a1x, accelColors[0], "ax", NeonAxis.LEFT),
+                        NeonSeries(a1y, accelColors[1], "ay", NeonAxis.LEFT),
+                        NeonSeries(a1z, accelColors[2], "az", NeonAxis.RIGHT),
                     ),
-                    bus = crosshair
-                ) {
-                    VicoLineChart(series = listOf(a1x, a1y, a1z).filter { it.isNotEmpty() })
-                }
+                    crosshair = crosshair,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 2", style = MaterialTheme.typography.titleLarge)
-            ChartCard {
-                ChartWithCrosshair(
-                    seriesData = listOf(
-                        Triple(a2x, Color(0xFFDC3232), "ax"),
-                        Triple(a2y, Color(0xFF32B432), "ay"),
-                        Triple(a2z, Color(0xFF3264DC), "az"),
+            ChartCard(height = 220) {
+                NeonChart(
+                    seriesList = listOf(
+                        NeonSeries(a2x, accelColors[0], "ax", NeonAxis.LEFT),
+                        NeonSeries(a2y, accelColors[1], "ay", NeonAxis.LEFT),
+                        NeonSeries(a2z, accelColors[2], "az", NeonAxis.RIGHT),
                     ),
-                    bus = crosshair
-                ) {
-                    VicoLineChart(series = listOf(a2x, a2y, a2z).filter { it.isNotEmpty() })
-                }
+                    crosshair = crosshair,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
             Text("3D облако акселерометров", style = MaterialTheme.typography.titleLarge)

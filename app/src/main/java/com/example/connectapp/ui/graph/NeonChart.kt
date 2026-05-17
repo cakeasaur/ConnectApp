@@ -1,0 +1,585 @@
+package com.example.connectapp.ui.graph
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.PointMode
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import com.example.connectapp.data.models.TimedPoint
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+
+// ============================================================
+// Public API
+// ============================================================
+
+enum class NeonAxis { LEFT, RIGHT }
+
+/**
+ * Одна серия данных для [NeonChart].
+ * @param axis к какой Y-оси привязана (LEFT по умолчанию). На акселерометре
+ *   az обычно вешают на RIGHT — у него масштаб ~1000 LSB, а ax/ay ±50.
+ *   Без разделения az давит маленькие колебания ax/ay в "плоскую линию".
+ */
+data class NeonSeries(
+    val data: List<TimedPoint>,
+    val color: Color,
+    val label: String,
+    val axis: NeonAxis = NeonAxis.LEFT,
+)
+
+/** Горизонтальная threshold-линия с alert-сравнением. */
+data class NeonThreshold(
+    val value: Float,
+    val label: String,
+    val color: Color = Color(0xFFFF8800),
+    val axis: NeonAxis = NeonAxis.LEFT,
+)
+
+data class NeonChartConfig(
+    val showEnvelope: Boolean = false,
+    val showSigma: Boolean = false,
+    val thresholds: List<NeonThreshold> = emptyList(),
+    val envelopeWindowPoints: Int = 20,
+)
+
+/**
+ * Кастомный научный line-chart в Canvas.
+ *
+ * Заменяет Vico для трёх основных графиков (Температура, Аксел-1, Аксел-2).
+ * Даёт то что Vico из коробки не умеет:
+ *   - две независимые Y-оси (left/right) — критично для акселерометра,
+ *     где az(~1000) перебивает ax/ay(±50)
+ *   - envelope band (min/max rolling)
+ *   - ±1σ scatter background
+ *   - neon-стиль с glow (blur + двойной обвод)
+ *   - threshold-линии с alert-маркером
+ *   - drug-обработка + curve smoothing
+ *
+ * Архитектура рендеринга:
+ *   1. background: тёмная подложка
+ *   2. grid: тонкие линии
+ *   3. для каждой axis: подписи Y-делений
+ *   4. для каждой серии (по порядку, новые поверх):
+ *      a. envelope (если включён) — semi-transparent band
+ *      b. ±1σ scatter background
+ *      c. line с glow (2 прохода: blur halo + solid core)
+ *      d. current-point pulse
+ *   5. threshold-линии + alert icons
+ *   6. X-axis labels
+ */
+@Composable
+fun NeonChart(
+    seriesList: List<NeonSeries>,
+    modifier: Modifier = Modifier,
+    config: NeonChartConfig = NeonChartConfig(),
+    crosshair: CrosshairBus? = null,
+) {
+    val nonEmpty = seriesList.filter { it.data.isNotEmpty() }
+    if (nonEmpty.isEmpty()) {
+        Box(
+            modifier = modifier
+                .background(NeonTheme.bg, RoundedCornerShape(8.dp))
+                .padding(12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "нет данных",
+                color = NeonTheme.axisText,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        return
+    }
+
+    // Pre-computed bounds, кэшируется по списку и timestamp последней точки.
+    val lastT = nonEmpty.maxOf { it.data.last().t }
+    val firstT = nonEmpty.minOf { it.data.first().t }
+    val bounds = remember(nonEmpty.size, lastT, config.thresholds) {
+        computeBounds(nonEmpty, config.thresholds)
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(NeonTheme.bg)
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawNeonChart(nonEmpty, bounds, config, firstT, lastT)
+        }
+        // Легенда сверху-слева.
+        LegendRow(
+            nonEmpty.map { it.label to it.color },
+            modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+        )
+        // Crosshair overlay — общий с sync-bus.
+        if (crosshair != null) {
+            CrosshairOverlay(crosshair, firstT, lastT, nonEmpty)
+        }
+    }
+}
+
+// ============================================================
+// Theme
+// ============================================================
+
+object NeonTheme {
+    val bg = Color(0xFF050B14)           // deep navy
+    val gridMajor = Color(0xFF1A2A40)
+    val gridMinor = Color(0xFF0F1A2A)
+    val axisText = Color(0xFF8090B0)
+    val axisLine = Color(0xFF2A3A55)
+    val crosshair = Color(0xFFFFFFFF)
+}
+
+/** Тонировка цвета серии для glow — alpha halo. */
+private fun Color.glow(a: Float = 0.35f) = copy(alpha = a)
+
+// ============================================================
+// Bounds computation
+// ============================================================
+
+private data class AxisBounds(val yMin: Float, val yMax: Float) {
+    val range: Float get() = (yMax - yMin).coerceAtLeast(1e-6f)
+}
+
+private data class ChartBounds(val left: AxisBounds, val right: AxisBounds?)
+
+private fun computeBounds(
+    series: List<NeonSeries>,
+    thresholds: List<NeonThreshold>
+): ChartBounds {
+    fun boundsFor(axis: NeonAxis): AxisBounds? {
+        val relevant = series.filter { it.axis == axis }
+        val thr = thresholds.filter { it.axis == axis }
+        if (relevant.isEmpty() && thr.isEmpty()) return null
+        var mn = Float.POSITIVE_INFINITY
+        var mx = Float.NEGATIVE_INFINITY
+        for (s in relevant) for (p in s.data) {
+            if (p.value < mn) mn = p.value
+            if (p.value > mx) mx = p.value
+        }
+        for (t in thr) {
+            if (t.value < mn) mn = t.value
+            if (t.value > mx) mx = t.value
+        }
+        if (!mn.isFinite() || !mx.isFinite()) return null
+        val pad = ((mx - mn) * 0.1f).coerceAtLeast(0.5f)
+        return AxisBounds(mn - pad, mx + pad)
+    }
+    val left = boundsFor(NeonAxis.LEFT) ?: AxisBounds(-1f, 1f)
+    val right = boundsFor(NeonAxis.RIGHT)
+    return ChartBounds(left, right)
+}
+
+// ============================================================
+// Drawing
+// ============================================================
+
+/** Левый/правый отступ под Y-подписи; нижний — под X-подписи. */
+private const val PAD_LEFT = 44f
+private const val PAD_RIGHT_BASE = 12f
+private const val PAD_RIGHT_WITH_AXIS = 44f
+private const val PAD_TOP = 24f
+private const val PAD_BOTTOM = 24f
+
+private fun DrawScope.drawNeonChart(
+    series: List<NeonSeries>,
+    bounds: ChartBounds,
+    config: NeonChartConfig,
+    firstT: Long,
+    lastT: Long,
+) {
+    val padR = if (bounds.right != null) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
+    val plotL = PAD_LEFT
+    val plotR = size.width - padR
+    val plotT = PAD_TOP
+    val plotB = size.height - PAD_BOTTOM
+    val plotW = plotR - plotL
+    val plotH = plotB - plotT
+    if (plotW <= 0 || plotH <= 0) return
+
+    val tRange = (lastT - firstT).coerceAtLeast(1L)
+    fun xPx(t: Long) = plotL + plotW * (t - firstT).toFloat() / tRange
+    fun yPx(value: Float, ab: AxisBounds) = plotB - plotH * (value - ab.yMin) / ab.range
+
+    // 1. Grid: 5 horizontal divisions, 6 vertical.
+    val hDiv = 5
+    val vDiv = 6
+    for (i in 0..hDiv) {
+        val y = plotT + plotH * i / hDiv
+        val color = if (i == 0 || i == hDiv) NeonTheme.gridMajor else NeonTheme.gridMinor
+        drawLine(color, Offset(plotL, y), Offset(plotR, y), strokeWidth = 0.5f)
+    }
+    for (i in 0..vDiv) {
+        val x = plotL + plotW * i / vDiv
+        val color = if (i == 0 || i == vDiv) NeonTheme.gridMajor else NeonTheme.gridMinor
+        drawLine(color, Offset(x, plotT), Offset(x, plotB), strokeWidth = 0.5f)
+    }
+
+    // 2. Y-axis labels (left).
+    drawAxisLabelsY(bounds.left, plotL - 4f, plotT, plotB, hDiv, right = false)
+    bounds.right?.let { drawAxisLabelsY(it, plotR + 4f, plotT, plotB, hDiv, right = true) }
+
+    // 3. X-axis labels (4 ticks).
+    val seconds = (lastT - firstT) / 1000f
+    val useDecimal = seconds < 10f
+    for (i in 0..vDiv) {
+        val x = plotL + plotW * i / vDiv
+        val t = firstT + tRange * i / vDiv
+        val sec = (t - firstT) / 1000f
+        val txt = if (useDecimal) "%.1fs".format(Locale.ROOT, sec) else "${sec.toInt()}s"
+        drawText(txt, x, plotB + 14f, alignCenter = true)
+    }
+
+    // 4. Per-series drawing (envelope → sigma → line → current point).
+    for (s in series) {
+        val ab = when (s.axis) {
+            NeonAxis.LEFT -> bounds.left
+            NeonAxis.RIGHT -> bounds.right ?: bounds.left
+        }
+        if (config.showEnvelope) drawEnvelope(s, ab, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
+        if (config.showSigma) drawSigma(s, ab, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
+        drawSeriesLine(s, ab, ::xPx, ::yPx)
+        drawCurrentPoint(s, ab, ::xPx, ::yPx)
+    }
+
+    // 5. Threshold lines.
+    for (thr in config.thresholds) {
+        val ab = when (thr.axis) {
+            NeonAxis.LEFT -> bounds.left
+            NeonAxis.RIGHT -> bounds.right ?: continue
+        }
+        val y = yPx(thr.value, ab)
+        if (y in plotT..plotB) {
+            drawLine(
+                thr.color.copy(alpha = 0.7f),
+                Offset(plotL, y), Offset(plotR, y),
+                strokeWidth = 1f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
+            )
+            drawText("⚠ ${thr.label}", plotR - 4f, y - 4f, alignCenter = false, color = thr.color)
+        }
+    }
+}
+
+private fun DrawScope.drawAxisLabelsY(
+    ab: AxisBounds, xPx: Float, top: Float, bottom: Float,
+    divisions: Int, right: Boolean
+) {
+    for (i in 0..divisions) {
+        val frac = i.toFloat() / divisions
+        val v = ab.yMax - frac * ab.range
+        val y = top + (bottom - top) * frac
+        drawText(formatTick(v), xPx, y + 3f, alignCenter = false, alignRight = !right)
+    }
+}
+
+private fun formatTick(v: Float): String = when {
+    v.isNaN() || !v.isFinite() -> "—"
+    abs(v) >= 100f -> "%.0f".format(Locale.ROOT, v)
+    abs(v) >= 10f -> "%.1f".format(Locale.ROOT, v)
+    else -> "%.2f".format(Locale.ROOT, v)
+}
+
+/** Линия с glow-эффектом: 2 прохода Paint — wide blurred halo + thin solid core. */
+private fun DrawScope.drawSeriesLine(
+    s: NeonSeries,
+    ab: AxisBounds,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+) {
+    if (s.data.size < 2) return
+    val path = buildSmoothPath(s.data, xPx, yPx, ab)
+
+    drawIntoCanvas { canvas ->
+        // Halo: ширина 6dp, blur через BlurMaskFilter, низкая alpha.
+        val haloPaint = Paint().apply {
+            color = s.color.glow(0.4f)
+            style = androidx.compose.ui.graphics.PaintingStyle.Stroke
+            strokeWidth = 6f
+            strokeCap = StrokeCap.Round
+            asFrameworkPaint().maskFilter = android.graphics.BlurMaskFilter(6f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+            isAntiAlias = true
+        }
+        canvas.drawPath(path, haloPaint)
+        // Core: 2dp solid line.
+        val corePaint = Paint().apply {
+            color = s.color
+            style = androidx.compose.ui.graphics.PaintingStyle.Stroke
+            strokeWidth = 2f
+            strokeCap = StrokeCap.Round
+            isAntiAlias = true
+        }
+        canvas.drawPath(path, corePaint)
+    }
+}
+
+/** Catmull-Rom-like smoothing через quadraticBezierTo по серединам. */
+private fun buildSmoothPath(
+    data: List<TimedPoint>,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+    ab: AxisBounds,
+): Path {
+    val path = Path()
+    if (data.isEmpty()) return path
+    val first = data[0]
+    path.moveTo(xPx(first.t), yPx(first.value, ab))
+    if (data.size == 1) return path
+    // Простой smoothing: к каждой точке quadratic через середину пред-следующей.
+    for (i in 1 until data.size) {
+        val p = data[i]
+        val prev = data[i - 1]
+        val mx = (xPx(prev.t) + xPx(p.t)) / 2f
+        val my = (yPx(prev.value, ab) + yPx(p.value, ab)) / 2f
+        path.quadraticBezierTo(xPx(prev.t), yPx(prev.value, ab), mx, my)
+    }
+    val last = data.last()
+    path.lineTo(xPx(last.t), yPx(last.value, ab))
+    return path
+}
+
+private fun DrawScope.drawCurrentPoint(
+    s: NeonSeries,
+    ab: AxisBounds,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+) {
+    val last = s.data.lastOrNull() ?: return
+    val x = xPx(last.t); val y = yPx(last.value, ab)
+    drawCircle(s.color.copy(alpha = 0.3f), radius = 8f, center = Offset(x, y))
+    drawCircle(s.color, radius = 4f, center = Offset(x, y))
+}
+
+// ============================================================
+// Envelope band (min/max rolling)
+// ============================================================
+
+private fun DrawScope.drawEnvelope(
+    s: NeonSeries,
+    ab: AxisBounds,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+    plotT: Float,
+    plotB: Float,
+    window: Int,
+) {
+    val data = s.data
+    val n = data.size
+    if (n < 2) return
+    val pathTop = Path()
+    val pathBot = Path()
+    var started = false
+    for (i in 0 until n) {
+        val lo = max(0, i - window / 2)
+        val hi = min(n - 1, i + window / 2)
+        var mn = Float.POSITIVE_INFINITY
+        var mx = Float.NEGATIVE_INFINITY
+        for (j in lo..hi) {
+            val v = data[j].value
+            if (v < mn) mn = v
+            if (v > mx) mx = v
+        }
+        val x = xPx(data[i].t)
+        val yTop = yPx(mx, ab).coerceIn(plotT, plotB)
+        val yBot = yPx(mn, ab).coerceIn(plotT, plotB)
+        if (!started) {
+            pathTop.moveTo(x, yTop)
+            pathBot.moveTo(x, yBot)
+            started = true
+        } else {
+            pathTop.lineTo(x, yTop)
+            pathBot.lineTo(x, yBot)
+        }
+    }
+    // Замкнуть band: top → reverse bottom.
+    val band = Path()
+    band.addPath(pathTop)
+    // pathBot rev — идём в обратную сторону.
+    for (i in n - 1 downTo 0) {
+        val lo = max(0, i - window / 2)
+        val hi = min(n - 1, i + window / 2)
+        var mn = Float.POSITIVE_INFINITY
+        for (j in lo..hi) if (data[j].value < mn) mn = data[j].value
+        band.lineTo(xPx(data[i].t), yPx(mn, ab).coerceIn(plotT, plotB))
+    }
+    band.close()
+    drawPath(band, s.color.copy(alpha = 0.12f))
+}
+
+// ============================================================
+// ±1σ scatter band
+// ============================================================
+
+private fun DrawScope.drawSigma(
+    s: NeonSeries,
+    ab: AxisBounds,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+    plotT: Float,
+    plotB: Float,
+    window: Int,
+) {
+    val data = s.data
+    val n = data.size
+    if (n < 3) return
+    val pts = ArrayList<Offset>(n * 2)
+    for (i in 0 until n) {
+        val lo = max(0, i - window / 2)
+        val hi = min(n - 1, i + window / 2)
+        var sum = 0.0; var sumSq = 0.0; var cnt = 0
+        for (j in lo..hi) { val v = data[j].value; sum += v; sumSq += v.toDouble() * v; cnt++ }
+        val mean = sum / cnt
+        val variance = (sumSq / cnt - mean * mean).coerceAtLeast(0.0)
+        val sigma = kotlin.math.sqrt(variance).toFloat()
+        if (sigma <= 0f) continue
+        val x = xPx(data[i].t)
+        val yMin = yPx((mean + sigma).toFloat(), ab).coerceIn(plotT, plotB)
+        val yMax = yPx((mean - sigma).toFloat(), ab).coerceIn(plotT, plotB)
+        pts.add(Offset(x, yMin)); pts.add(Offset(x, yMax))
+    }
+    if (pts.isEmpty()) return
+    drawPoints(
+        points = pts,
+        pointMode = PointMode.Lines,
+        color = s.color.copy(alpha = 0.18f),
+        strokeWidth = 1f,
+    )
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+private fun DrawScope.drawText(
+    text: String, x: Float, y: Float,
+    alignCenter: Boolean = false,
+    alignRight: Boolean = false,
+    color: Color = NeonTheme.axisText,
+    sizePx: Float = 10f * density,
+) {
+    drawIntoCanvas { canvas ->
+        val paint = android.graphics.Paint().apply {
+            this.color = color.toArgb()
+            textSize = sizePx
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        val w = paint.measureText(text)
+        val drawX = when {
+            alignCenter -> x - w / 2f
+            alignRight -> x - w
+            else -> x
+        }
+        canvas.nativeCanvas.drawText(text, drawX, y, paint)
+    }
+}
+
+private fun Color.toArgb(): Int {
+    val a = (alpha * 255).toInt() and 0xFF
+    val r = (red * 255).toInt() and 0xFF
+    val g = (green * 255).toInt() and 0xFF
+    val b = (blue * 255).toInt() and 0xFF
+    return (a shl 24) or (r shl 16) or (g shl 8) or b
+}
+
+// ============================================================
+// Legend
+// ============================================================
+
+@Composable
+private fun LegendRow(
+    items: List<Pair<String, Color>>,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items.forEach { (label, color) ->
+            // Цветной "●" в строке заменяет отдельный кружок-Canvas — проще,
+            // меньше layout-логики, выглядит одинаково.
+            Text(
+                "● $label",
+                color = color,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
+// ============================================================
+// Crosshair overlay (общий sync с CrosshairBus)
+// ============================================================
+
+@Composable
+private fun CrosshairOverlay(
+    bus: CrosshairBus,
+    firstT: Long,
+    lastT: Long,
+    series: List<NeonSeries>,
+) {
+    val sel = bus.selectedT ?: return
+    if (sel !in firstT..lastT || lastT <= firstT) return
+    val frac = (sel - firstT).toFloat() / (lastT - firstT)
+    val values = series.mapNotNull { s ->
+        val p = findNearest(s.data, sel) ?: return@mapNotNull null
+        "${s.label}=%.2f".format(Locale.ROOT, p.value)
+    }.joinToString(" · ")
+    Canvas(Modifier.fillMaxSize()) {
+        val padR = if (series.any { it.axis == NeonAxis.RIGHT }) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
+        val plotL = PAD_LEFT; val plotR = size.width - padR
+        val x = plotL + (plotR - plotL) * frac
+        drawLine(
+            NeonTheme.crosshair.copy(alpha = 0.6f),
+            Offset(x, PAD_TOP), Offset(x, size.height - PAD_BOTTOM),
+            strokeWidth = 1f,
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
+        )
+    }
+    if (values.isNotEmpty()) {
+        Box(
+            modifier = Modifier
+                .padding(8.dp)
+                .background(
+                    color = NeonTheme.bg.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(4.dp)
+                )
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+        ) {
+            Text(
+                values,
+                color = NeonTheme.axisText,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
