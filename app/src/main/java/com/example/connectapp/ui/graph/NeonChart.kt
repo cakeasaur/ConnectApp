@@ -364,8 +364,8 @@ private fun DrawScope.drawNeonChart(
             NeonAxis.LEFT -> bounds.left
             NeonAxis.RIGHT -> bounds.right ?: bounds.left
         }
-        if (config.showEnvelope) drawEnvelope(s, ab, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
-        if (config.showSigma) drawSigma(s, ab, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
+        if (config.showEnvelope) drawEnvelope(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
+        if (config.showSigma) drawSigma(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
         drawSeriesLine(s, ab, firstT, lastT, ::xPx, ::yPx)
         drawCurrentPoint(s, ab, ::xPx, ::yPx)
     }
@@ -384,7 +384,9 @@ private fun DrawScope.drawNeonChart(
                 strokeWidth = 1f,
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
             )
-            drawText("⚠ ${thr.label}", plotR - 4f, y - 4f, alignCenter = false, color = thr.color)
+            // alignRight=true: текст растёт ВЛЕВО от plotR-4f. Без этого
+            // "⚠ overheat" уходил за правый край Canvas и был невидим.
+            drawText("⚠ ${thr.label}", plotR - 4f, y - 4f, alignRight = true, color = thr.color)
         }
     }
 }
@@ -443,10 +445,14 @@ private fun detectPhaseLockWindow(
         if (spectrum[i] > peakAmp) { peakAmp = spectrum[i]; peakBin = i }
         sumAmp += spectrum[i]
     }
-    val avgAmp = sumAmp / (spectrum.size - 1)
-    // Heuristic: пик должен быть хотя бы в 3 раза выше среднего — иначе
-    // это шум, а не периодика.
-    if (peakAmp < avgAmp * 3f || peakBin < 1) return null
+    // Среднее БЕЗ пика — иначе при сильном пике он сам подтягивает
+    // avgAmp вверх, и критерий peak>3×avg почти всегда срабатывает.
+    // Без peak: avg отражает уровень "не-сигнальных" бинов.
+    val otherBinsCount = (spectrum.size - 2).coerceAtLeast(1)
+    val avgAmp = (sumAmp - peakAmp) / otherBinsCount
+    // Heuristic: пик должен быть хотя бы в 3 раза выше "шума" (среднего
+    // непиковых бинов). Иначе это широкополосный шум, а не периодика.
+    if (peakAmp < avgAmp * 3f) return null
     val periodSec = fftSize / (peakBin * sampleRateHz)
     if (periodSec <= 0f || periodSec.isNaN()) return null
     val windowMs = (2 * periodSec * 1000).toLong()
@@ -561,9 +567,21 @@ private fun DrawScope.drawCurrentPoint(
 // Envelope band (min/max rolling)
 // ============================================================
 
+/**
+ * Min/max envelope с phase-lock-clip и кэшем min/max в массиве.
+ *
+ * Phase-lock-clip: считаем только точки в окне firstT..lastT. Без этого
+ * band тянулся через ВСЕ s.data, давая отрицательные xPx за левым краем.
+ *
+ * Один проход по окну (раньше было два: первый строил pathTop+pathBot,
+ * второй ПЕРЕСЧИТЫВАЛ min заново для замыкания band). Теперь кэшируем
+ * min/max в FloatArray и используем при замыкании.
+ */
 private fun DrawScope.drawEnvelope(
     s: NeonSeries,
     ab: AxisBounds,
+    firstT: Long,
+    lastT: Long,
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
     plotT: Float,
@@ -573,12 +591,23 @@ private fun DrawScope.drawEnvelope(
     val data = s.data
     val n = data.size
     if (n < 2) return
-    val pathTop = Path()
-    val pathBot = Path()
-    var started = false
-    for (i in 0 until n) {
-        val lo = max(0, i - window / 2)
-        val hi = min(n - 1, i + window / 2)
+
+    // Clip к окну [firstT..lastT]. Берём один индекс слева ПРЕД границей
+    // (если есть) как seed для непрерывной линии от левого края канваса.
+    var startIdx = 0
+    while (startIdx < n - 1 && data[startIdx + 1].t < firstT) startIdx++
+    var endIdx = n - 1
+    while (endIdx > 0 && data[endIdx - 1].t > lastT) endIdx--
+    if (startIdx >= endIdx) return
+
+    val len = endIdx - startIdx + 1
+    val mins = FloatArray(len)
+    val maxs = FloatArray(len)
+    // Один проход: считаем min/max по окну вокруг каждой точки.
+    for (k in 0 until len) {
+        val i = startIdx + k
+        val lo = max(startIdx, i - window / 2)
+        val hi = min(endIdx, i + window / 2)
         var mn = Float.POSITIVE_INFINITY
         var mx = Float.NEGATIVE_INFINITY
         for (j in lo..hi) {
@@ -586,28 +615,19 @@ private fun DrawScope.drawEnvelope(
             if (v < mn) mn = v
             if (v > mx) mx = v
         }
-        val x = xPx(data[i].t)
-        val yTop = yPx(mx, ab).coerceIn(plotT, plotB)
-        val yBot = yPx(mn, ab).coerceIn(plotT, plotB)
-        if (!started) {
-            pathTop.moveTo(x, yTop)
-            pathBot.moveTo(x, yBot)
-            started = true
-        } else {
-            pathTop.lineTo(x, yTop)
-            pathBot.lineTo(x, yBot)
-        }
+        mins[k] = mn
+        maxs[k] = mx
     }
-    // Замкнуть band: top → reverse bottom.
+
     val band = Path()
-    band.addPath(pathTop)
-    // pathBot rev — идём в обратную сторону.
-    for (i in n - 1 downTo 0) {
-        val lo = max(0, i - window / 2)
-        val hi = min(n - 1, i + window / 2)
-        var mn = Float.POSITIVE_INFINITY
-        for (j in lo..hi) if (data[j].value < mn) mn = data[j].value
-        band.lineTo(xPx(data[i].t), yPx(mn, ab).coerceIn(plotT, plotB))
+    // Top edge — forward.
+    band.moveTo(xPx(data[startIdx].t), yPx(maxs[0], ab).coerceIn(plotT, plotB))
+    for (k in 1 until len) {
+        band.lineTo(xPx(data[startIdx + k].t), yPx(maxs[k], ab).coerceIn(plotT, plotB))
+    }
+    // Bot edge — reverse, используем закэшированный min.
+    for (k in len - 1 downTo 0) {
+        band.lineTo(xPx(data[startIdx + k].t), yPx(mins[k], ab).coerceIn(plotT, plotB))
     }
     band.close()
     drawPath(band, s.color.copy(alpha = 0.12f))
@@ -617,9 +637,23 @@ private fun DrawScope.drawEnvelope(
 // ±1σ scatter band
 // ============================================================
 
+/**
+ * ±1σ scatter band с phase-lock-clip и стабильной формулой variance.
+ *
+ * Phase-lock-clip: считаем только точки в окне firstT..lastT.
+ *
+ * Variance: ДВУХПРОХОДНАЯ формула `Σ(x-μ)² / (n-1)` вместо одно-проходной
+ * `Σx²/n - (Σx/n)²`. Последняя страдает catastrophic cancellation на
+ * сигналах с малой дисперсией и большим mean (например, температура
+ * 25°C ± 0.05°C: Σx² и Σx огромные, разница крошечная — теряется в
+ * Float-ариметике). Bessel's correction (n-1) — sample variance,
+ * статистически правильно для оценки шума по выборке.
+ */
 private fun DrawScope.drawSigma(
     s: NeonSeries,
     ab: AxisBounds,
+    firstT: Long,
+    lastT: Long,
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
     plotT: Float,
@@ -629,14 +663,31 @@ private fun DrawScope.drawSigma(
     val data = s.data
     val n = data.size
     if (n < 3) return
-    val pts = ArrayList<Offset>(n * 2)
-    for (i in 0 until n) {
-        val lo = max(0, i - window / 2)
-        val hi = min(n - 1, i + window / 2)
-        var sum = 0.0; var sumSq = 0.0; var cnt = 0
-        for (j in lo..hi) { val v = data[j].value; sum += v; sumSq += v.toDouble() * v; cnt++ }
+
+    var startIdx = 0
+    while (startIdx < n - 1 && data[startIdx + 1].t < firstT) startIdx++
+    var endIdx = n - 1
+    while (endIdx > 0 && data[endIdx - 1].t > lastT) endIdx--
+    if (startIdx >= endIdx) return
+
+    val pts = ArrayList<Offset>((endIdx - startIdx + 1) * 2)
+    for (i in startIdx..endIdx) {
+        val lo = max(startIdx, i - window / 2)
+        val hi = min(endIdx, i + window / 2)
+        val cnt = hi - lo + 1
+        if (cnt < 2) continue
+        // Pass 1: mean.
+        var sum = 0.0
+        for (j in lo..hi) sum += data[j].value
         val mean = sum / cnt
-        val variance = (sumSq / cnt - mean * mean).coerceAtLeast(0.0)
+        // Pass 2: Σ(x - μ)² — numerically stable, нет cancellation.
+        var sumSqDev = 0.0
+        for (j in lo..hi) {
+            val d = data[j].value - mean
+            sumSqDev += d * d
+        }
+        // Bessel (n-1): sample variance — корректная оценка по выборке.
+        val variance = (sumSqDev / (cnt - 1)).coerceAtLeast(0.0)
         val sigma = kotlin.math.sqrt(variance).toFloat()
         if (sigma <= 0f) continue
         val x = xPx(data[i].t)
