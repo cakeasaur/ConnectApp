@@ -2,12 +2,14 @@ package com.example.connectapp.ui.graph
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -127,6 +129,21 @@ fun NeonChart(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(NeonTheme.bg)
+            // Tap-обработчик для crosshair. crosshair == null → отключаем
+            // pointerInput полностью (чарт может рендериться без курсора).
+            .let { m ->
+                if (crosshair == null) m else m.pointerInput(crosshair) {
+                    detectTapGestures { offset ->
+                        if (lastT <= firstT) return@detectTapGestures
+                        val padR = if (nonEmpty.any { it.axis == NeonAxis.RIGHT }) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
+                        val plotL = PAD_LEFT
+                        val plotR = size.width - padR
+                        if (offset.x < plotL || offset.x > plotR) return@detectTapGestures
+                        val frac = ((offset.x - plotL) / (plotR - plotL)).coerceIn(0f, 1f)
+                        crosshair.tap(firstT + (frac * (lastT - firstT)).toLong())
+                    }
+                }
+            }
     ) {
         Canvas(Modifier.fillMaxSize()) {
             drawNeonChart(nonEmpty, bounds, config, firstT, lastT)
@@ -546,40 +563,78 @@ private fun CrosshairOverlay(
     lastT: Long,
     series: List<NeonSeries>,
 ) {
-    val sel = bus.selectedT ?: return
-    if (sel !in firstT..lastT || lastT <= firstT) return
-    val frac = (sel - firstT).toFloat() / (lastT - firstT)
-    val values = series.mapNotNull { s ->
-        val p = findNearest(s.data, sel) ?: return@mapNotNull null
-        "${s.label}=%.2f".format(Locale.ROOT, p.value)
-    }.joinToString(" · ")
+    val c1 = bus.selectedT
+    val c2 = bus.secondT
+    if (c1 == null && c2 == null) return
+    if (lastT <= firstT) return
+
+    val padR = if (series.any { it.axis == NeonAxis.RIGHT }) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
     Canvas(Modifier.fillMaxSize()) {
-        val padR = if (series.any { it.axis == NeonAxis.RIGHT }) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
         val plotL = PAD_LEFT; val plotR = size.width - padR
-        val x = plotL + (plotR - plotL) * frac
-        drawLine(
-            NeonTheme.crosshair.copy(alpha = 0.6f),
-            Offset(x, PAD_TOP), Offset(x, size.height - PAD_BOTTOM),
-            strokeWidth = 1f,
-            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
-        )
+        // Cursor 1 — белый.
+        c1?.takeIf { it in firstT..lastT }?.let { t ->
+            val x = plotL + (plotR - plotL) * (t - firstT).toFloat() / (lastT - firstT)
+            drawLine(
+                NeonTheme.crosshair.copy(alpha = 0.7f),
+                Offset(x, PAD_TOP), Offset(x, size.height - PAD_BOTTOM),
+                strokeWidth = 1.2f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
+            )
+        }
+        // Cursor 2 — жёлтый (cyan был бы конфликтен с series).
+        c2?.takeIf { it in firstT..lastT }?.let { t ->
+            val x = plotL + (plotR - plotL) * (t - firstT).toFloat() / (lastT - firstT)
+            drawLine(
+                Color(0xFFFFEB3B).copy(alpha = 0.8f),
+                Offset(x, PAD_TOP), Offset(x, size.height - PAD_BOTTOM),
+                strokeWidth = 1.2f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
+            )
+        }
     }
-    if (values.isNotEmpty()) {
+
+    // Bubble сверху-справа: если 2 курсора — показываем Δ; иначе — значения.
+    val text = buildString {
+        if (c1 != null && c2 != null) {
+            val dtSec = kotlin.math.abs(c2 - c1) / 1000f
+            append("Δt=%.2fs".format(Locale.ROOT, dtSec))
+            for (s in series) {
+                val v1 = findNearest(s.data, c1)?.value
+                val v2 = findNearest(s.data, c2)?.value
+                if (v1 != null && v2 != null) {
+                    append(" · Δ${s.label}=%+.2f".format(Locale.ROOT, v2 - v1))
+                }
+            }
+        } else if (c1 != null) {
+            for (s in series) {
+                val v = findNearest(s.data, c1)?.value ?: continue
+                if (length > 0) append(" · ")
+                append("${s.label}=%.2f".format(Locale.ROOT, v))
+            }
+        }
+    }
+    if (text.isNotEmpty()) {
         Box(
             modifier = Modifier
-                .padding(8.dp)
-                .background(
-                    color = NeonTheme.bg.copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(4.dp)
-                )
-                .padding(horizontal = 6.dp, vertical = 2.dp)
+                .fillMaxSize()
+                .padding(8.dp),
+            contentAlignment = Alignment.TopEnd
         ) {
-            Text(
-                values,
-                color = NeonTheme.axisText,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-            )
+            Box(
+                modifier = Modifier
+                    .background(
+                        color = NeonTheme.bg.copy(alpha = 0.92f),
+                        shape = RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text,
+                    color = NeonTheme.axisText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
         }
     }
 }

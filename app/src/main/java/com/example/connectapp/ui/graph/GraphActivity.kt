@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,10 +21,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -45,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -242,6 +246,32 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                     }
                 },
                 actions = {
+                    // Cursor mode toggle: одиночный (тап → 1 курсор) →
+                    // dual-режим (тап-1 = c1, тап-2 = c2, показывает Δt/ΔY).
+                    // Долгий тап = clear обоих.
+                    IconButton(
+                        onClick = { crosshair.dualMode = !crosshair.dualMode },
+                        modifier = Modifier.pointerInput(crosshair) {
+                            detectTapGestures(onLongPress = { crosshair.clear() })
+                        }
+                    ) {
+                        Icon(
+                            Icons.Filled.Straighten,
+                            contentDescription = if (crosshair.dualMode) "dual cursor" else "single cursor",
+                            tint = if (crosshair.dualMode) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    // Clear cursors — отдельная кнопка для очевидности, рядом с режимом.
+                    if (crosshair.selectedT != null || crosshair.secondT != null) {
+                        IconButton(onClick = { crosshair.clear() }) {
+                            Icon(
+                                Icons.Filled.Clear,
+                                contentDescription = "Clear cursors",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     // Pause — заморозить графики и stats на текущем кадре, чтобы
                     // успеть прочитать значения, пока поток идёт. Снежинка → нажата.
                     IconButton(onClick = { paused = !paused }) {
