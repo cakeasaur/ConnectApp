@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.math.Fft
 import java.util.Locale
+import kotlin.math.log10
 
 /**
  * Спектрограмма (waterfall) — 2D-карта время × частота × амплитуда.
@@ -52,6 +53,13 @@ private const val MAX_COLUMNS = 200    // ~20с истории при 100мс ш
 // (Классический STFT использует hop = FFT_SIZE/2 = 32 для 50% overlap;
 // мы делаем гораздо плотнее для красоты.)
 private const val STEP_SAMPLES = 4
+
+/**
+ * Динамический диапазон для dB-шкалы (в децибелах ниже global max).
+ * Стандарт audio-визуализации: -60 dB ≈ 1/1000 от пика, удобно различать
+ * тихие сигналы. Больше → сильнее видно шум, меньше → высокий контраст.
+ */
+private const val DB_DYNAMIC_RANGE = 60f
 
 @Composable
 fun SpectrogramCard(
@@ -83,10 +91,16 @@ fun SpectrogramCard(
     val nyquist = sampleRateHz / 2f
     val peakHz = remember(series.size, lastT) { findPeakFreq(series, sampleRateHz) }
 
-    NeonCard(modifier = modifier.fillMaxWidth().height(220.dp)) {
+    // Полная глубина спектрограммы по времени = nCols * STEP / fs.
+    // Считаем приблизительно от max возможной (MAX_COLUMNS) — реальное
+    // число колонок может быть меньше пока буфер не заполнился, но
+    // подпись остаётся стабильной.
+    val totalSpanSec = MAX_COLUMNS * STEP_SAMPLES / sampleRateHz
+    val hopMs = STEP_SAMPLES * 1000 / sampleRateHz
+    NeonCard(modifier = modifier.fillMaxWidth().height(240.dp)) {
         Text(
-            "STFT окно %d отсчётов · шаг %d · диапазон 0..%.1f Гц · доминанта %.2f Гц"
-                .format(Locale.ROOT, FFT_SIZE, STEP_SAMPLES, nyquist, peakHz),
+            "STFT окно %d · hop %.0fмс · 0..%.1f Гц · пик %.2f Гц · dB-scale −%.0fdB..0"
+                .format(Locale.ROOT, FFT_SIZE, hopMs, nyquist, peakHz, DB_DYNAMIC_RANGE),
             style = MaterialTheme.typography.bodySmall,
             color = NeonTheme.axisText,
             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
@@ -126,6 +140,28 @@ fun SpectrogramCard(
                     modifier = Modifier
                         .padding(4.dp)
                         .align(Alignment.BottomStart)
+                )
+                // X-метки времени: старые слева, "сейчас" справа.
+                // totalSpanSec — полная глубина буфера; интервал между метками
+                // = treть от него для приличной плотности подписей.
+                Text(
+                    "−%.0fs".format(Locale.ROOT, totalSpanSec),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    modifier = Modifier
+                        .padding(4.dp)
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 0.dp)
+                )
+                Text(
+                    "now",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    modifier = Modifier
+                        .padding(4.dp)
+                        .align(Alignment.BottomEnd)
                 )
             }
     }
@@ -172,17 +208,26 @@ private fun fillSpectrogramBitmap(
     }
     val invMax = 1f / maxAmp
 
-    // Если nCols < MAX_COLUMNS, левая часть бufера зануляется — иначе
+    // Если nCols < MAX_COLUMNS, левая часть буфера зануляется — иначе
     // на previous поколении могли остаться "хвосты".
     java.util.Arrays.fill(pixelBuf, android.graphics.Color.BLACK)
     val offsetCol = MAX_COLUMNS - nCols  // новые колонки прижаты к правому краю
+
+    // dB-маппинг: amp_norm = amp/max ∈ (0..1] → 20·log10(amp_norm) ∈ (-∞..0]
+    // → клампим в [-DB_DYNAMIC_RANGE..0] → нормируем в [0..1] для LUT.
+    // EPS защищает log10 от нуля (тихие бины → max attenuation).
+    val EPS = 1e-9f
+    val invRange = 1f / DB_DYNAMIC_RANGE
     for (col in 0 until nCols) {
         val spectrum = columns[col]
         for (row in 0 until freqBins) {
-            val amp = (spectrum.getOrElse(row) { 0f } * invMax).coerceIn(0f, 1f)
+            val ampNorm = (spectrum.getOrElse(row) { 0f } * invMax).coerceIn(0f, 1f)
+            val dB = 20f * log10(ampNorm + EPS)
+            // dB ∈ (-180..0] для EPS=1e-9. Клампим в [-DB_DYNAMIC_RANGE..0].
+            val intensity = ((dB + DB_DYNAMIC_RANGE) * invRange).coerceIn(0f, 1f)
             // Low-freq внизу: pixel row = freqBins-1-row.
             val pixelRow = freqBins - 1 - row
-            pixelBuf[pixelRow * MAX_COLUMNS + offsetCol + col] = TurboLut.colorFor(amp)
+            pixelBuf[pixelRow * MAX_COLUMNS + offsetCol + col] = TurboLut.colorFor(intensity)
         }
     }
     bitmap.setPixels(pixelBuf, 0, MAX_COLUMNS, 0, 0, MAX_COLUMNS, freqBins)
