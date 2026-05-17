@@ -202,6 +202,10 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
     var monitoring by remember { mutableStateOf(false) }
     var paused by remember { mutableStateOf(false) }
     var window by remember { mutableStateOf(TimeWindow.ALL) }
+    // Overlays для NeonChart — научный режим: envelope / ±1σ / threshold.
+    var showEnvelope by remember { mutableStateOf(false) }
+    var showSigma by remember { mutableStateOf(false) }
+    var showThreshold by remember { mutableStateOf(false) }
     // Shared crosshair-state — тап на любом из 3 line charts двигает линию
     // во ВСЕХ. Объект (не StateFlow) держит Long? state без боксинга.
     val crosshair = remember { CrosshairBus() }
@@ -326,11 +330,62 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                 }
             }
 
+            // Overlays-row: envelope / ±1σ / threshold-alert. Применяются
+            // ко ВСЕМ NeonChart'ам единообразно — научный режим.
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "overlays:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                val chipColors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
+                FilterChip(
+                    selected = showEnvelope,
+                    onClick = { showEnvelope = !showEnvelope },
+                    label = { Text("envelope") },
+                    colors = chipColors
+                )
+                FilterChip(
+                    selected = showSigma,
+                    onClick = { showSigma = !showSigma },
+                    label = { Text("±σ") },
+                    colors = chipColors
+                )
+                FilterChip(
+                    selected = showThreshold,
+                    onClick = { showThreshold = !showThreshold },
+                    label = { Text("⚠ alert") },
+                    colors = chipColors
+                )
+            }
+
             // Neon-палитра — насыщенные неоновые цвета поверх тёмного фона
             // карточки. Не путать с цветами серий в Vico (FF3232 / 3264DC):
             // здесь они подобраны под dark BG для максимальной читаемости.
             val tempColors = listOf(Color(0xFFFF6B6B), Color(0xFF4FC3F7))
             val accelColors = listOf(Color(0xFFFF5252), Color(0xFF69F0AE), Color(0xFF40C4FF))
+
+            // Конфиги per chart. Thresholds — тематические:
+            //   T > 28°C → перегрев
+            //   az отклонение от 1g (1000) > 100 LSB → сильная вибрация
+            val tempConfig = NeonChartConfig(
+                showEnvelope = showEnvelope,
+                showSigma = showSigma,
+                thresholds = if (showThreshold) listOf(
+                    NeonThreshold(28f, "overheat", Color(0xFFFFAA00))
+                ) else emptyList()
+            )
+            val accelConfig = NeonChartConfig(
+                showEnvelope = showEnvelope,
+                showSigma = showSigma,
+                thresholds = if (showThreshold) listOf(
+                    NeonThreshold(1100f, "vibration", Color(0xFFFF8800), NeonAxis.RIGHT)
+                ) else emptyList()
+            )
 
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
             TempStatsRow("T1", temp1)
@@ -341,6 +396,7 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                         NeonSeries(temp1, tempColors[0], "T1"),
                         NeonSeries(temp2, tempColors[1], "T2"),
                     ),
+                    config = tempConfig,
                     crosshair = crosshair,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -356,6 +412,7 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                         NeonSeries(a1y, accelColors[1], "ay", NeonAxis.LEFT),
                         NeonSeries(a1z, accelColors[2], "az", NeonAxis.RIGHT),
                     ),
+                    config = accelConfig,
                     crosshair = crosshair,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -369,6 +426,7 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                         NeonSeries(a2y, accelColors[1], "ay", NeonAxis.LEFT),
                         NeonSeries(a2z, accelColors[2], "az", NeonAxis.RIGHT),
                     ),
+                    config = accelConfig,
                     crosshair = crosshair,
                     modifier = Modifier.fillMaxSize()
                 )
