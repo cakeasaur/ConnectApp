@@ -15,8 +15,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -361,13 +364,16 @@ private fun CrossCorrCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
     val lastT1 = a1.last().t
     val lastT2 = a2.last().t
     val corr = remember(n, lastT1, lastT2) {
+        // Парим ПО TIMESTAMP через findNearest, не по индексу. При
+        // рассинхронизации (потеря пакетов, разный rate) index-pairing
+        // давал бы корреляцию temporally misaligned точек → мусор.
         val x = FloatArray(n)
         val y = FloatArray(n)
         val from1 = a1.size - n
-        val from2 = a2.size - n
         for (i in 0 until n) {
-            x[i] = a1[from1 + i].value
-            y[i] = a2[from2 + i].value
+            val xPoint = a1[from1 + i]
+            x[i] = xPoint.value
+            y[i] = (findNearest(a2, xPoint.t) ?: xPoint).value
         }
         CrossCorrelation.normalized(x, y, maxLag)
     }
@@ -483,21 +489,18 @@ private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>, generat
         return
     }
     // Kalman держим в remember МЕЖДУ recompose'ами и шагаем только на новых
-    // отсчётах с прошлого раза. Раньше каждый recompose выполнял O(n) проход
-    // по всему окну — на 600 точках это лишние ~3k mul/add впустую.
-    //
-    // generation как ключ remember: при SensorDataBus.clear() инкрементится →
-    // пересоздаём Kalman с нуля, иначе оценка тащит state от удалённой сессии.
+    // отсчётах с прошлого раза. generation как ключ — при SensorDataBus.clear()
+    // инкрементится → пересоздаём Kalman с нуля.
     val kalman = remember(generation) { Kalman1D(processVar = 0.5f, measVar1 = 5f, measVar2 = 8f) }
-    // Изменяемый holder для последнего обработанного timestamp.
-    // LongArray(1) — простейший mutable Long без MutableState (не дёргаем recompose).
     val lastSeenT = remember(generation) { LongArray(1) { Long.MIN_VALUE } }
+    // estimate/covariance — observable state, обновляется ингестом в LaunchedEffect.
+    // Раньше mutation была внутри remember{} — composition cancel посередине
+    // ингеста означал двойную обработку точек на retry и дрейф оценки.
+    var est by remember(generation) { mutableStateOf(0f to 1f) }
     val lastT1 = a1.last().t
-    val lastT2 = a2.last().t
-    val estimate = remember(lastT1, lastT2) {
+    LaunchedEffect(generation, lastT1) {
         val n1 = a1.size; val n2 = a2.size
         val pairCount = min(n1, n2)
-        // Найти первый ещё не обработанный индекс. a1 отсортирован по t (append-only).
         val startT = lastSeenT[0]
         var startIdx = pairCount - 1
         while (startIdx >= 0 && a1[startIdx + (n1 - pairCount)].t > startT) startIdx--
@@ -507,9 +510,12 @@ private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>, generat
         for (i in startIdx until pairCount) {
             kalman.update(a1[i + off1].value, a2[i + off2].value)
         }
+        // ВАЖНО: lastSeenT обновляем ПЕРЕД публикацией — если LaunchedEffect
+        // отменится сразу после ингеста, ретриггер не будет двойной обработки.
         lastSeenT[0] = lastT1
-        kalman.estimate to kalman.covariance
+        est = kalman.estimate to kalman.covariance
     }
+    val estimate = est
     val raw1 = a1.last().value
     val raw2 = a2.last().value
 
