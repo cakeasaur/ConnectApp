@@ -16,17 +16,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,9 +47,11 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -205,7 +211,10 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
 
     var monitoring by remember { mutableStateOf(false) }
     var paused by remember { mutableStateOf(false) }
-    var window by remember { mutableStateOf(TimeWindow.ALL) }
+    // windowMs: 0L = "все" (без фильтра), иначе — длина окна в мс.
+    // Заменили enum TimeWindow на непрерывное значение + zoom-кнопки —
+    // дискретный выбор 30с/1м/5м/все был ограничен 4 пресетами.
+    var windowMs by remember { mutableLongStateOf(0L) }
     // Overlays для NeonChart — научный режим: envelope / ±1σ / threshold /
     // phase-lock (автоподгонка окна к 2 периодам доминирующей частоты).
     var showEnvelope by remember { mutableStateOf(false) }
@@ -226,9 +235,8 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
     val a2ySnap = snapshotWhen(paused, a2yLive)
     val a2zSnap = snapshotWhen(paused, a2zLive)
 
-    // 2) Window: показываем только хвост длиной window.ms (0 = всё).
+    // 2) Window: показываем только хвост длиной windowMs (0 = всё).
     //    remember с ключом (snap, windowMs) — не пересчитываем если данные те же.
-    val windowMs = window.ms
     val temp1 = remember(temp1Snap, windowMs) { applyWindow(temp1Snap, windowMs) }
     val temp2 = remember(temp2Snap, windowMs) { applyWindow(temp2Snap, windowMs) }
     val a1x = remember(a1xSnap, windowMs) { applyWindow(a1xSnap, windowMs) }
@@ -338,26 +346,53 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                 }
             }
 
-            // Window selector — фильтр по времени для всех графиков и stats.
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Zoom-bar — непрерывный контроль окна вместо 4 пресетов.
+            // IconButton 48×48 дают комфортные touch-targets.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
                     stringResource(R.string.graph_window_label),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                TimeWindow.values().forEach { tw ->
-                    // Явный selectedContainerColor — дефолтный FilterChip в
-                    // тёмной теме слабо отличает selected от unselected,
-                    // оба выглядят прозрачными чипами с обводкой.
-                    FilterChip(
-                        selected = window == tw,
-                        onClick = { window = tw },
-                        label = { Text(tw.label) },
-                        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                        )
+                IconButton(
+                    onClick = {
+                        // Zoom out: если "все" → переходим в фиксированное 5мин,
+                        // иначе ×1.5, кап 60 минут.
+                        windowMs = when {
+                            windowMs == 0L -> 5L * 60_000L
+                            else -> (windowMs * 3L / 2L).coerceAtMost(60L * 60_000L)
+                        }
+                    }
+                ) {
+                    Icon(Icons.Filled.ZoomOut, contentDescription = "Уменьшить масштаб")
+                }
+                // Текущее окно в человеко-читаемом виде.
+                Text(
+                    formatWindow(windowMs),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 4.dp).widthIn(min = 56.dp)
+                )
+                IconButton(
+                    onClick = {
+                        // Zoom in: если "все" → начинаем с 1 минуты, иначе /1.5.
+                        windowMs = when {
+                            windowMs == 0L -> 60_000L
+                            else -> (windowMs * 2L / 3L).coerceAtLeast(5_000L)
+                        }
+                    }
+                ) {
+                    Icon(Icons.Filled.ZoomIn, contentDescription = "Увеличить масштаб")
+                }
+                IconButton(onClick = { windowMs = 0L }) {
+                    Icon(
+                        Icons.Filled.AllInclusive,
+                        contentDescription = "Показать всё",
+                        tint = if (windowMs == 0L) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurface
                     )
                 }
             }

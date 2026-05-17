@@ -7,17 +7,6 @@ import androidx.compose.runtime.remember
 import com.example.connectapp.data.models.TimedPoint
 
 /**
- * Возможные значения окна отображения для графиков.
- * 0L означает "вся история" — таким значением выключаем оконный фильтр.
- */
-enum class TimeWindow(val ms: Long, val label: String) {
-    SEC_30(30_000L, "30с"),
-    MIN_1(60_000L, "1м"),
-    MIN_5(5L * 60_000L, "5м"),
-    ALL(0L, "все")
-}
-
-/**
  * Возвращает [value] если [paused] = false; иначе — значение, захваченное
  * в момент, когда [paused] стало true. Используется для "заморозки" графиков
  * на текущем кадре, пока поток данных продолжает приходить в SensorDataBus.
@@ -33,6 +22,22 @@ fun <T> snapshotWhen(paused: Boolean, value: T): T {
         if (paused) frozen.value = value
     }
     return if (paused) frozen.value else value
+}
+
+/**
+ * Человеко-читаемый формат окна: "5s" / "1m 30s" / "12m" / "1h 5m" / "все".
+ */
+fun formatWindow(windowMs: Long): String {
+    if (windowMs <= 0L) return "все"
+    val totalSec = windowMs / 1000L
+    val h = totalSec / 3600L
+    val m = (totalSec % 3600L) / 60L
+    val s = totalSec % 60L
+    return when {
+        h > 0 -> if (m > 0) "${h}h ${m}m" else "${h}h"
+        m > 0 -> if (s > 0) "${m}m ${s}s" else "${m}m"
+        else -> "${s}s"
+    }
 }
 
 /**
