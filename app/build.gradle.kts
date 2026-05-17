@@ -91,12 +91,10 @@ dependencies {
     // DataStore Preferences (настройки приложения)
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // Charts — Vico (Compose-нативный, без AndroidView обёртки).
-    // Заменили MPAndroidChart v3.1.0: тот не апдейтился с 2019, тянул AndroidView,
-    // требовал ProGuard keep-правила.
-    // Версия 1.14.0 — последняя, совместимая с Kotlin 1.9. Vico 2.0 требует Kotlin 2.1+.
-    implementation("com.patrykandpatrick.vico:compose:1.14.0")
-    implementation("com.patrykandpatrick.vico:compose-m3:1.14.0")
+    // Vico удалён — все line-charts мигрировали на кастомный NeonChart
+    // (ui/graph/NeonChart.kt), который рисует через Canvas+Path с
+    // multi-axis, envelope, sigma, glow и phase-lock. Math-section
+    // использует свою реализацию FFT (math/Fft.kt), не из Vico.
 
     // USB serial — поддержка CP210x/CDC/FTDI/CH34x/Prolific.
     // Альтернатива HC-05/Wi-Fi: USB-OTG-кабель прямо к плате через UART-bridge.

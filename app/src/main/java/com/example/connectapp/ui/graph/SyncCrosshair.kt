@@ -1,24 +1,7 @@
 package com.example.connectapp.ui.graph
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.Stable
 import com.example.connectapp.data.models.TimedPoint
-import java.util.Locale
 
 /**
  * Шина общего состояния sync-crosshair. Тап на любом чарте обновляет
@@ -27,7 +10,17 @@ import java.util.Locale
  *
  * Объект (не StateFlow) хранится в [androidx.compose.runtime.remember] на
  * уровне GraphScreen — это даёт shared mutable state без боксинга Long.
+ *
+ * Поддерживает 2 режима:
+ *  - SINGLE: только cursor1, тап двигает его
+ *  - DUAL: cursor1 + cursor2, тапы заполняют пустой слот, при заполненных
+ *    двух — двигают ближайший по timestamp. Bubble показывает Δt/ΔY.
+ *
+ * @Stable — поля внутри читаются через snapshot из mutableStateOf, но
+ *   сам класс не data — Compose без аннотации считает его unstable и
+ *   инвалидирует подписчики на каждый recompose родителя.
  */
+@Stable
 class CrosshairBus {
     /** Первый (основной) cursor. */
     private val s1 = androidx.compose.runtime.mutableStateOf<Long?>(null)
@@ -71,101 +64,6 @@ class CrosshairBus {
     }
 
     fun clear() { s1.value = null; s2.value = null }
-}
-
-/**
- * Обёртка над Vico-чартом, добавляющая:
- *   - tap-detector → обновляет shared [bus.selectedT]
- *   - overlay Canvas с вертикальной dashed-линией crosshair, если selectedT
- *     попадает в диапазон времени серий
- *   - метку справа сверху с числовыми значениями всех серий на выбранном
- *     моменте (ближайшая точка)
- *
- * Координаты линии — приблизительные: используем полную ширину Box без
- * учёта Vico Y-axis padding (~30dp слева). Сдвиг визуально незаметен
- * (линия dashed и без маркера на самой линии данных). Это компромисс
- * точности ради простоты — программно вытащить chart-bounds из Vico 1.14
- * нельзя.
- *
- * @param seriesData серии в одном чарте: пары (данные, цвет, метка)
- */
-@Composable
-fun ChartWithCrosshair(
-    seriesData: List<Triple<List<TimedPoint>, Color, String>>,
-    bus: CrosshairBus,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
-) {
-    val nonEmpty = seriesData.filter { it.first.isNotEmpty() }
-    Box(modifier = modifier) {
-        // Сам Vico-чарт ниже.
-        content()
-        // Overlay tap-детектор. fillMaxSize — иначе тап в zoom-area Vico
-        // конкурирует с pan-gestures Vico (но у нас scroll выключен → ок).
-        // pointerInput key — Unit (handler-замыкание не зависит от данных,
-        // ищем minT/maxT в момент тапа). С ключом по nonEmpty.size детектор
-        // перезапускался когда серий становилось больше → терялся
-        // незавершённый gesture. Тут handler стабилен — Unit достаточно.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        val ne = seriesData.filter { it.first.isNotEmpty() }
-                        if (ne.isEmpty()) return@detectTapGestures
-                        val minT = ne.minOf { it.first.first().t }
-                        val maxT = ne.maxOf { it.first.last().t }
-                        if (maxT <= minT) return@detectTapGestures
-                        val frac = (offset.x / size.width).coerceIn(0f, 1f)
-                        bus.selectedT = minT + (frac * (maxT - minT)).toLong()
-                    }
-                }
-        ) {
-            val selT = bus.selectedT
-            if (selT != null && nonEmpty.isNotEmpty()) {
-                val minT = nonEmpty.minOf { it.first.first().t }
-                val maxT = nonEmpty.maxOf { it.first.last().t }
-                if (maxT > minT && selT in minT..maxT) {
-                    val frac = ((selT - minT).toFloat() / (maxT - minT)).coerceIn(0f, 1f)
-                    val lineColor = MaterialTheme.colorScheme.primary
-                    Canvas(Modifier.fillMaxSize()) {
-                        val x = size.width * frac
-                        drawLine(
-                            color = lineColor.copy(alpha = 0.7f),
-                            start = Offset(x, 0f),
-                            end = Offset(x, size.height),
-                            strokeWidth = 1.5f,
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 4f))
-                        )
-                    }
-                    // Bubble с значениями ближайших точек.
-                    val values = nonEmpty.mapNotNull { (data, _, label) ->
-                        val p = findNearest(data, selT) ?: return@mapNotNull null
-                        "$label=%.2f".format(Locale.ROOT, p.value)
-                    }.joinToString(" · ")
-                    if (values.isNotEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(6.dp)
-                                .background(
-                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
-                                )
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                values,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 /**

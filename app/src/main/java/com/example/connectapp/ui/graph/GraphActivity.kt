@@ -5,8 +5,9 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -54,7 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -68,17 +68,6 @@ import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.ui.theme.AppThemeWithSettings
-import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
-import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
-import com.patrykandpatrick.vico.compose.chart.Chart
-import com.patrykandpatrick.vico.compose.chart.line.lineChart
-import com.patrykandpatrick.vico.compose.chart.line.lineSpec
-import com.patrykandpatrick.vico.core.axis.AxisPosition
-import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
-import com.patrykandpatrick.vico.core.chart.values.AxisValuesOverrider
-import com.patrykandpatrick.vico.core.entry.FloatEntry
-import com.patrykandpatrick.vico.core.entry.entryModelOf
-import com.patrykandpatrick.vico.core.entry.entryOf
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -195,7 +184,7 @@ class GraphActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: () -> Unit) {
     // Live-данные с шины. Дальше прогоняем через snapshotWhen(paused) и
@@ -256,14 +245,19 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                     }
                 },
                 actions = {
-                    // Cursor mode toggle: одиночный (тап → 1 курсор) →
-                    // dual-режим (тап-1 = c1, тап-2 = c2, показывает Δt/ΔY).
-                    // Долгий тап = clear обоих.
-                    IconButton(
-                        onClick = { crosshair.dualMode = !crosshair.dualMode },
-                        modifier = Modifier.pointerInput(crosshair) {
-                            detectTapGestures(onLongPress = { crosshair.clear() })
-                        }
+                    // Cursor mode toggle: тап → переключить single/dual,
+                    // long-press → clear обоих курсоров.
+                    // Используем Box + combinedClickable, потому что IconButton
+                    // с onClick КОНФЛИКТУЕТ с pointerInput { detectTapGestures } —
+                    // последний поглощает тапы и onClick не срабатывает.
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .combinedClickable(
+                                onClick = { crosshair.dualMode = !crosshair.dualMode },
+                                onLongClick = { crosshair.clear() }
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             Icons.Filled.Straighten,
@@ -562,101 +556,3 @@ private fun ChartCard(height: Int = 220, content: @Composable () -> Unit) {
     }
 }
 
-/**
- * Линейный график на Vico 1.14. Принимает 1..N серий TimedPoint.
- *
- * X-ось = СЕКУНДЫ относительно baseMs, КВАНТИЗОВАННЫЕ до 0.01с (10мс).
- * Почему квантизация: Vico 1.14 кидает IllegalArgumentException("x values are
- * too precise. Maximum precision is two decimal places") если у X >2 знаков
- * после запятой. (t - baseMs) / 1000f даёт 3-знаковые значения — крашит весь
- * экран графиков.
- *
- * Также де-дублируем точки с одинаковым квантизованным X: Vico требует
- * строго возрастающую X-последовательность, иначе IllegalArgumentException.
- *
- * Модель — синхронная entryModelOf(...). Async ChartEntryModelProducer
- * страдал тем же x-precision крашем, но молча (исключение в корутине), и
- * визуально график оставался пустым.
- */
-@Composable
-private fun VicoLineChart(series: List<List<TimedPoint>>) {
-    val nonEmpty = series.filter { it.isNotEmpty() }
-    if (nonEmpty.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-            Text(
-                "нет данных — запусти monitor",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        return
-    }
-
-    val baseMs = nonEmpty.minOf { it.first().t }
-
-    // Квантизация: (t - base) ms → centiseconds (Long) → Float секунды с 2 знаками.
-    // distinctBy(x) — Vico требует уникальные строго возрастающие X.
-    // Список уже отсортирован по времени (добавляется только в конец).
-    val model = remember(nonEmpty, baseMs) {
-        val seriesArr: Array<List<FloatEntry>> = nonEmpty.map { points ->
-            val seen = HashSet<Float>(points.size)
-            points.mapNotNull { p ->
-                val cs = (p.t - baseMs) / 10L  // 10ms-кванты
-                val x = cs.toFloat() / 100f    // секунды × 100 → 2 знака
-                if (seen.add(x)) entryOf(x, p.value) else null
-            }.takeIf { it.isNotEmpty() } ?: listOf(entryOf(0f, points.first().value))
-        }.toTypedArray()
-        entryModelOf(*seriesArr)
-    }
-
-    // Цвета серий: T (1-2 линии) — red/blue, Accel (3) — R/G/B.
-    val seriesColors = when (nonEmpty.size) {
-        1 -> listOf(0xFFDC3232)
-        2 -> listOf(0xFFDC3232, 0xFF3264DC)
-        else -> listOf(0xFFDC3232, 0xFF32B432, 0xFF3264DC)
-    }
-    val lineSpecs = seriesColors.map { argb ->
-        // lineBackgroundShader = null → отключаем дефолтную полупрозрачную
-        // заливку под линией. Иначе T1 (красная заливка) закрывает T2 на
-        // том же чарте, и видна только тонкая полоска T2 на дне.
-        lineSpec(
-            lineColor = androidx.compose.ui.graphics.Color(argb),
-            lineBackgroundShader = null
-        )
-    }
-
-    // Y-авто-зум: Vico по умолчанию ставит Ymin = min(0, dataMin), и температура
-    // 22..27°C превращается в сплющенную полоску у верха. Берём min/max данных
-    // + 10% padding (или ≥ 0.5 ед., чтобы плоская линия не схлопывалась).
-    val allY = nonEmpty.flatMap { it.asSequence().map(TimedPoint::value).toList() }
-    val yMin = allY.min()
-    val yMax = allY.max()
-    val pad = ((yMax - yMin) * 0.1f).coerceAtLeast(0.5f)
-    val yOverrider = remember(yMin, yMax) {
-        AxisValuesOverrider.fixed(minY = yMin - pad, maxY = yMax + pad)
-    }
-
-    // X-метки: адаптивно по диапазону данных.
-    //   < 10с  → "0.0s, 0.5s, 1.0s"  (одна десятая — иначе всё "0s")
-    //   ≥ 10с  → "0s, 12s, 24s"       (целые секунды)
-    // Раньше всегда был toInt() → на коротком окне (<1с) ВСЕ метки = "0s".
-    val maxX = nonEmpty.maxOf { (it.last().t - baseMs) / 10L } / 100f
-    val timeFmt = remember(maxX < 10f) {
-        val showDecimal = maxX < 10f
-        AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
-            if (showDecimal) "%.1fs".format(java.util.Locale.ROOT, value)
-            else "${value.toInt()}s"
-        }
-    }
-
-    Chart(
-        chart = lineChart(lines = lineSpecs, axisValuesOverrider = yOverrider),
-        model = model,
-        startAxis = rememberStartAxis(),
-        bottomAxis = rememberBottomAxis(valueFormatter = timeFmt),
-        // Marker отключён — ChartWithCrosshair overlay перехватывает тапы,
-        // и Vico marker всё равно не сработал бы. Crosshair даёт ТУ ЖЕ
-        // функцию плюс синхронизацию по 3 чартам — строгое улучшение.
-        modifier = Modifier.fillMaxSize()
-    )
-}

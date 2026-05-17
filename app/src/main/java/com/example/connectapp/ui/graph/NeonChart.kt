@@ -129,24 +129,23 @@ fun NeonChart(
         return
     }
 
-    // Pre-computed bounds, кэшируется по списку и timestamp последней точки.
     val rawLastT = nonEmpty.maxOf { it.data.last().t }
     val rawFirstT = nonEmpty.minOf { it.data.first().t }
 
     // Phase-lock — переопределяем окно отображения до 2 периодов доминанты.
-    // Если периодичность не обнаружена (амплитуда пика мала) → fallback raw.
-    val (firstT, lastT) = remember(rawLastT, config.phaseLock) {
-        if (config.phaseLock) {
-            detectPhaseLockWindow(nonEmpty[0].data, config.sampleRateHz, rawFirstT, rawLastT)
-                ?: (rawFirstT to rawLastT)
-        } else rawFirstT to rawLastT
-    }
+    // Если периодичность не обнаружена → fallback raw. Считаем без
+    // remember — детект всё равно дёшев (FFT-64 ≈ 0.3 мс), а ключ raw lastT
+    // меняется на КАЖДОМ новом отсчёте, делая кэш бесполезным.
+    val (firstT, lastT) = if (config.phaseLock) {
+        detectPhaseLockWindow(nonEmpty[0].data, config.sampleRateHz, rawFirstT, rawLastT)
+            ?: (rawFirstT to rawLastT)
+    } else rawFirstT to rawLastT
 
-    val bounds = remember(nonEmpty.size, lastT, config.thresholds) {
-        // bounds считаются по ВСЕМ данным серий (не урезаем по phase-lock
-        // окну) — иначе Y-масштаб скачет при каждом новом отсчёте.
-        computeBounds(nonEmpty, config.thresholds)
-    }
+    // bounds считаются по ВСЕМ данным серий (не по phase-lock окну) — иначе
+    // Y-масштаб скачет на каждом новом отсчёте. БЕЗ remember: ring-buffer
+    // фиксированной длины делал nonEmpty.size константой и bounds залипали
+    // на устаревших значениях. Считаем напрямую — O(N) проход дёшев.
+    val bounds = computeBounds(nonEmpty, config.thresholds)
 
     Box(
         modifier = modifier
@@ -240,10 +239,13 @@ private fun computeBounds(
 // Drawing
 // ============================================================
 
-/** Левый/правый отступ под Y-подписи; нижний — под X-подписи. */
-private const val PAD_LEFT = 44f
+/**
+ * Отступы под подписи осей. PAD_LEFT=56f даёт ~5 знаков (например "-1100"
+ * с минусом) без обрезания; меньше — лейблы накладываются на сетку.
+ */
+private const val PAD_LEFT = 56f
 private const val PAD_RIGHT_BASE = 12f
-private const val PAD_RIGHT_WITH_AXIS = 44f
+private const val PAD_RIGHT_WITH_AXIS = 56f
 private const val PAD_TOP = 24f
 private const val PAD_BOTTOM = 24f
 
@@ -304,7 +306,7 @@ private fun DrawScope.drawNeonChart(
         }
         if (config.showEnvelope) drawEnvelope(s, ab, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
         if (config.showSigma) drawSigma(s, ab, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
-        drawSeriesLine(s, ab, ::xPx, ::yPx)
+        drawSeriesLine(s, ab, firstT, lastT, ::xPx, ::yPx)
         drawCurrentPoint(s, ab, ::xPx, ::yPx)
     }
 
@@ -335,6 +337,9 @@ private fun DrawScope.drawAxisLabelsY(
         val frac = i.toFloat() / divisions
         val v = ab.yMax - frac * ab.range
         val y = top + (bottom - top) * frac
+        // Левая ось: метка ВПРАВО от xPx=PAD_LEFT-4, выровнена по правому
+        // краю (текст растёт справа-налево). Правая ось: метка ВПРАВО от
+        // xPx=plotR+4, выровнена по левому краю (текст растёт слева-направо).
         drawText(formatTick(v), xPx, y + 3f, alignCenter = false, alignRight = !right)
     }
 }
@@ -389,60 +394,93 @@ private fun detectPhaseLockWindow(
     return if (lastT > first) first to lastT else null
 }
 
-/** Линия с glow-эффектом: 2 прохода Paint — wide blurred halo + thin solid core. */
+/**
+ * Cached Paint instances — раньше создавались каждый drawSeriesLine call
+ * (3 чарта × 3 серии × 2 paint × 10Hz = 180 Paint/сек + 90 BlurMaskFilter).
+ * BlurMaskFilter — native alloc, особенно дорогой. Создаются один раз
+ * при загрузке класса, на каждой отрисовке только цвет меняется.
+ */
+private val haloPaint = Paint().apply {
+    style = androidx.compose.ui.graphics.PaintingStyle.Stroke
+    strokeWidth = 6f
+    strokeCap = StrokeCap.Round
+    asFrameworkPaint().maskFilter = android.graphics.BlurMaskFilter(6f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+    isAntiAlias = true
+}
+private val corePaint = Paint().apply {
+    style = androidx.compose.ui.graphics.PaintingStyle.Stroke
+    strokeWidth = 2f
+    strokeCap = StrokeCap.Round
+    isAntiAlias = true
+}
+
+/**
+ * Линия с glow-эффектом: 2 прохода Paint — wide blurred halo + thin solid core.
+ *
+ * Phase-lock-clip: до построения path урезаем data до окна firstT..lastT.
+ * Иначе path тянется от первой точки series.data (timestamp << firstT) до
+ * последней — xPx даёт отрицательные/большие значения, glow blur может
+ * цеплять видимую область чарта артефактами.
+ */
 private fun DrawScope.drawSeriesLine(
     s: NeonSeries,
     ab: AxisBounds,
+    firstT: Long, lastT: Long,
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
 ) {
     if (s.data.size < 2) return
-    val path = buildSmoothPath(s.data, xPx, yPx, ab)
+    val path = buildSmoothPath(s.data, firstT, lastT, xPx, yPx, ab)
 
     drawIntoCanvas { canvas ->
-        // Halo: ширина 6dp, blur через BlurMaskFilter, низкая alpha.
-        val haloPaint = Paint().apply {
-            color = s.color.glow(0.4f)
-            style = androidx.compose.ui.graphics.PaintingStyle.Stroke
-            strokeWidth = 6f
-            strokeCap = StrokeCap.Round
-            asFrameworkPaint().maskFilter = android.graphics.BlurMaskFilter(6f, android.graphics.BlurMaskFilter.Blur.NORMAL)
-            isAntiAlias = true
-        }
+        haloPaint.color = s.color.glow(0.4f)
         canvas.drawPath(path, haloPaint)
-        // Core: 2dp solid line.
-        val corePaint = Paint().apply {
-            color = s.color
-            style = androidx.compose.ui.graphics.PaintingStyle.Stroke
-            strokeWidth = 2f
-            strokeCap = StrokeCap.Round
-            isAntiAlias = true
-        }
+        corePaint.color = s.color
         canvas.drawPath(path, corePaint)
     }
 }
 
-/** Catmull-Rom-like smoothing через quadraticBezierTo по серединам. */
+/**
+ * Catmull-Rom-подобное сглаживание через quadraticBezierTo с control в
+ * текущей точке и end в середине следующего сегмента.
+ *
+ * Раньше control был равен prev (предыдущей точке) → bezier вырождалась
+ * в прямую (control НА линии start→end), сглаживания не было.
+ *
+ * Path clip по firstT..lastT — пропускаем точки вне окна (phase-lock).
+ */
 private fun buildSmoothPath(
     data: List<TimedPoint>,
+    firstT: Long, lastT: Long,
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
     ab: AxisBounds,
 ): Path {
     val path = Path()
-    if (data.isEmpty()) return path
-    val first = data[0]
+    // Найти диапазон точек попадающих в окно. Точки до firstT не рисуем,
+    // но первую "слева от окна" оставляем как seed для непрерывной линии
+    // от левого края canvas (иначе линия "обрывается" перед окном).
+    val n = data.size
+    if (n == 0) return path
+    var startIdx = 0
+    while (startIdx < n - 1 && data[startIdx + 1].t < firstT) startIdx++
+    var endIdx = n - 1
+    while (endIdx > 0 && data[endIdx - 1].t > lastT) endIdx--
+    if (startIdx >= endIdx) return path
+
+    val first = data[startIdx]
     path.moveTo(xPx(first.t), yPx(first.value, ab))
-    if (data.size == 1) return path
-    // Простой smoothing: к каждой точке quadratic через середину пред-следующей.
-    for (i in 1 until data.size) {
+    // Quadratic через середины: control=точка i, end=midpoint(i, i+1).
+    // Это даёт плавную кривую через все точки данных (Catmull-Rom-like).
+    for (i in startIdx + 1 until endIdx) {
         val p = data[i]
-        val prev = data[i - 1]
-        val mx = (xPx(prev.t) + xPx(p.t)) / 2f
-        val my = (yPx(prev.value, ab) + yPx(p.value, ab)) / 2f
-        path.quadraticBezierTo(xPx(prev.t), yPx(prev.value, ab), mx, my)
+        val pn = data[i + 1]
+        val mx = (xPx(p.t) + xPx(pn.t)) / 2f
+        val my = (yPx(p.value, ab) + yPx(pn.value, ab)) / 2f
+        path.quadraticBezierTo(xPx(p.t), yPx(p.value, ab), mx, my)
     }
-    val last = data.last()
+    // Финальный сегмент — прямая к последней точке.
+    val last = data[endIdx]
     path.lineTo(xPx(last.t), yPx(last.value, ab))
     return path
 }
