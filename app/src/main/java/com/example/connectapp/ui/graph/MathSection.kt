@@ -152,32 +152,28 @@ private fun FftCard(series: List<TimedPoint>) {
     }
     val peakHz = Fft.binHz(peakBin, SAMPLE_RATE_HZ, fftSize)
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth().height(200.dp)
-    ) {
-        Column(Modifier.padding(12.dp).fillMaxSize()) {
-            Text(
-                "пик: %.2f Гц · амплитуда %.1f · окно %d отсчётов · fs=%.0f Гц"
-                    .format(Locale.ROOT, peakHz, peakAmp, fftSize, SAMPLE_RATE_HZ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(4.dp))
-            FftSpectrumBars(
-                spectrum = spectrum,
-                nyquistHz = nyquist,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
+    NeonCard(modifier = Modifier.fillMaxWidth().height(200.dp)) {
+        Text(
+            "пик: %.2f Гц · амплитуда %.1f · окно %d отсчётов · fs=%.0f Гц"
+                .format(Locale.ROOT, peakHz, peakAmp, fftSize, SAMPLE_RATE_HZ),
+            style = MaterialTheme.typography.bodySmall,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(4.dp))
+        FftSpectrumBars(
+            spectrum = spectrum,
+            nyquistHz = nyquist,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
 /** Рисует столбики спектра. X — частота 0..Nyquist, Y — амплитуда (auto-scale). */
 @Composable
 private fun FftSpectrumBars(spectrum: FloatArray, nyquistHz: Float, modifier: Modifier) {
-    val barColor = MaterialTheme.colorScheme.primary
-    val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+    val barColor = NeonTheme.accent
+    val gridColor = NeonTheme.gridMajor
     Canvas(modifier = modifier) {
         if (spectrum.isEmpty()) return@Canvas
         val maxAmp = (spectrum.maxOrNull() ?: 1f).coerceAtLeast(1e-6f)
@@ -235,33 +231,24 @@ private fun VibrationStatsCard(label: String, series: List<TimedPoint>) {
         for (i in 0 until winSize) arr[i] = series[from + i].value
         computeVibrationStats(arr)
     }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    NeonCard(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(12.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            StatBox("RMS", "%.1f".format(Locale.ROOT, stats.rms))
-            StatBox("Peak", "%.1f".format(Locale.ROOT, stats.peak))
-            StatBox("Crest", "%.2f".format(Locale.ROOT, stats.crest), warn = stats.crest > 4f)
-            StatBox("Kurt", "%.2f".format(Locale.ROOT, stats.kurtosis), warn = stats.kurtosis > 4f)
+            Text(
+                label,
+                color = NeonTheme.textPrimary,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+            )
+            NeonStatBox("RMS", "%.1f".format(Locale.ROOT, stats.rms))
+            NeonStatBox("Peak", "%.1f".format(Locale.ROOT, stats.peak))
+            NeonStatBox("Crest", "%.2f".format(Locale.ROOT, stats.crest), warn = stats.crest > 4f)
+            NeonStatBox("Kurt", "%.2f".format(Locale.ROOT, stats.kurtosis), warn = stats.kurtosis > 4f)
         }
-    }
-}
-
-@Composable
-private fun StatBox(label: String, value: String, warn: Boolean = false) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            value,
-            style = MaterialTheme.typography.titleMedium,
-            fontFamily = FontFamily.Monospace,
-            color = if (warn) Color(0xFFD32F2F) else MaterialTheme.colorScheme.onSurface
-        )
     }
 }
 
@@ -285,11 +272,8 @@ private fun TiltCard(ax: List<TimedPoint>, ay: List<TimedPoint>, az: List<TimedP
     val roll = Orientation.rollDeg(axV, ayV, azV)
     val mag = Orientation.magnitude(axV, ayV, azV)
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth().height(220.dp)
-    ) {
-        Row(Modifier.padding(12.dp).fillMaxSize()) {
+    NeonCard(modifier = Modifier.fillMaxWidth().height(220.dp)) {
+        Row(Modifier.fillMaxSize()) {
             // Левая половина — пузырьковый уровень
             Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.Center) {
                 BubbleLevel(pitch = pitch, roll = roll, modifier = Modifier.fillMaxSize())
@@ -300,19 +284,23 @@ private fun TiltCard(ax: List<TimedPoint>, ay: List<TimedPoint>, az: List<TimedP
                 verticalArrangement = Arrangement.Center
             ) {
                 Text("Pitch: %+.1f°".format(Locale.ROOT, pitch),
+                    color = NeonTheme.textPrimary,
                     style = MaterialTheme.typography.titleMedium,
                     fontFamily = FontFamily.Monospace)
                 Text("Roll:  %+.1f°".format(Locale.ROOT, roll),
+                    color = NeonTheme.textPrimary,
                     style = MaterialTheme.typography.titleMedium,
                     fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(8.dp))
                 Text("|a| = %.0f LSB".format(Locale.ROOT, mag),
+                    color = NeonTheme.axisText,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    fontFamily = FontFamily.Monospace)
                 Text(
                     "норма ~1000 (= 1g, покой)",
+                    color = NeonTheme.axisText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    fontFamily = FontFamily.Monospace
                 )
             }
         }
@@ -322,9 +310,9 @@ private fun TiltCard(ax: List<TimedPoint>, ay: List<TimedPoint>, az: List<TimedP
 /** Круглый уровень с пузырьком, смещённым по (pitch, roll). */
 @Composable
 private fun BubbleLevel(pitch: Float, roll: Float, modifier: Modifier) {
-    val frameColor = MaterialTheme.colorScheme.onSurface
-    val bubbleColor = MaterialTheme.colorScheme.primary
-    val centerCrossColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val frameColor = NeonTheme.axisText
+    val bubbleColor = NeonTheme.accent
+    val centerCrossColor = NeonTheme.gridMajor
     Canvas(modifier = modifier) {
         val cx = size.width / 2f
         val cy = size.height / 2f
@@ -380,34 +368,32 @@ private fun CrossCorrCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
     val (bestLag, bestVal) = CrossCorrelation.bestLag(corr, maxLag)
     val lagSec = bestLag / SAMPLE_RATE_HZ
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth().height(180.dp)
-    ) {
-        Column(Modifier.padding(12.dp).fillMaxSize()) {
-            Text(
-                "best lag: %+d отсчётов (%+.2f с) · R=%.3f"
-                    .format(Locale.ROOT, bestLag, lagSec, bestVal),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                if (bestLag > 0) "ax2 отстаёт от ax1 на $bestLag отсчётов"
-                else if (bestLag < 0) "ax2 опережает ax1 на ${-bestLag} отсчётов"
-                else "сигналы синхронны",
-                style = MaterialTheme.typography.bodySmall
-            )
-            Spacer(Modifier.height(4.dp))
-            CrossCorrCurve(corr, maxLag, Modifier.fillMaxSize())
-        }
+    NeonCard(modifier = Modifier.fillMaxWidth().height(180.dp)) {
+        Text(
+            "best lag: %+d отсчётов (%+.2f с) · R=%.3f"
+                .format(Locale.ROOT, bestLag, lagSec, bestVal),
+            style = MaterialTheme.typography.bodySmall,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            if (bestLag > 0) "ax2 отстаёт от ax1 на $bestLag отсчётов"
+            else if (bestLag < 0) "ax2 опережает ax1 на ${-bestLag} отсчётов"
+            else "сигналы синхронны",
+            color = NeonTheme.textPrimary,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(4.dp))
+        CrossCorrCurve(corr, maxLag, Modifier.fillMaxSize())
     }
 }
 
 @Composable
 private fun CrossCorrCurve(corr: FloatArray, maxLag: Int, modifier: Modifier) {
-    val lineColor = MaterialTheme.colorScheme.primary
-    val zeroColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-    val peakColor = Color(0xFFD32F2F)
+    val lineColor = NeonTheme.accent
+    val zeroColor = NeonTheme.gridMajor
+    val peakColor = NeonTheme.alert
     Canvas(modifier = modifier) {
         if (corr.isEmpty()) return@Canvas
         val w = size.width
@@ -453,26 +439,22 @@ private fun HeatFluxCard(t1: List<TimedPoint>, t2: List<TimedPoint>) {
     val q = HeatFlux.compute(t1v, t2v, distanceM, HeatFlux.Conductivity.COPPER)
     val gradient = (t2v - t1v) / distanceM
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(
-                "ΔT = %.2f °C · Δx = %.0f мм · k = 401 Вт/(м·К) [медь]"
-                    .format(Locale.ROOT, t2v - t1v, distanceM * 1000),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+    NeonCard(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "ΔT = %.2f °C · Δx = %.0f мм · k = 401 Вт/(м·К) [медь]"
+                .format(Locale.ROOT, t2v - t1v, distanceM * 1000),
+            style = MaterialTheme.typography.bodySmall,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            NeonStatBox("∇T", "%+.1f К/м".format(Locale.ROOT, gradient))
+            NeonStatBox("q", "%+.0f Вт/м²".format(Locale.ROOT, q))
+            NeonStatBox(
+                if (q > 0) "→" else if (q < 0) "←" else "—",
+                if (q > 0) "T1→T2" else if (q < 0) "T2→T1" else "нет"
             )
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                StatBox("∇T", "%+.1f К/м".format(Locale.ROOT, gradient))
-                StatBox("q", "%+.0f Вт/м²".format(Locale.ROOT, q))
-                StatBox(
-                    if (q > 0) "→" else if (q < 0) "←" else "—",
-                    if (q > 0) "T1→T2" else if (q < 0) "T2→T1" else "нет"
-                )
-            }
         }
     }
 }
@@ -519,23 +501,19 @@ private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>, generat
     val raw1 = a1.last().value
     val raw2 = a2.last().value
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(
-                "две оценки ax → одна оптимальная (Q=0.5, R1=5, R2=8)",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                StatBox("ax1", "%+.1f".format(Locale.ROOT, raw1))
-                StatBox("ax2", "%+.1f".format(Locale.ROOT, raw2))
-                StatBox("x̂", "%+.1f".format(Locale.ROOT, estimate.first))
-                StatBox("P", "%.3f".format(Locale.ROOT, estimate.second))
-            }
+    NeonCard(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "две оценки ax → одна оптимальная (Q=0.5, R1=5, R2=8)",
+            style = MaterialTheme.typography.bodySmall,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            NeonStatBox("ax1", "%+.1f".format(Locale.ROOT, raw1))
+            NeonStatBox("ax2", "%+.1f".format(Locale.ROOT, raw2))
+            NeonStatBox("x̂", "%+.1f".format(Locale.ROOT, estimate.first))
+            NeonStatBox("P", "%.3f".format(Locale.ROOT, estimate.second))
         }
     }
 }
@@ -546,12 +524,13 @@ private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>, generat
 
 @Composable
 private fun EmptyCard(text: String) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth().height(80.dp)
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    NeonCard(modifier = Modifier.fillMaxWidth().height(80.dp)) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                text,
+                color = NeonTheme.axisText,
+                fontFamily = FontFamily.Monospace
+            )
         }
     }
 }

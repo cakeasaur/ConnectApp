@@ -187,16 +187,76 @@ fun NeonChart(
 // ============================================================
 
 object NeonTheme {
-    val bg = Color(0xFF050B14)           // deep navy
+    val bg = Color(0xFF050B14)           // deep navy фон карточек
     val gridMajor = Color(0xFF1A2A40)
     val gridMinor = Color(0xFF0F1A2A)
-    val axisText = Color(0xFF8090B0)
+    val axisText = Color(0xFF8090B0)     // приглушённый цвет для меток/осей
     val axisLine = Color(0xFF2A3A55)
     val crosshair = Color(0xFFFFFFFF)
+    /** Основной текст значений — яркий, моноспейс. */
+    val textPrimary = Color(0xFFE0EAFF)
+    /** Акцентный неон — для подсветки активных значений / threshold. */
+    val accent = Color(0xFF4FC3F7)
+    val warn = Color(0xFFFFAA00)
+    val alert = Color(0xFFFF5252)
 }
 
 /** Тонировка цвета серии для glow — alpha halo. */
 private fun Color.glow(a: Float = 0.35f) = copy(alpha = a)
+
+// ============================================================
+// Reusable Card / StatBox styled like NeonChart — для математических
+// карточек ниже на экране Графиков. Единый visual language со scientific-
+// scope эстетикой.
+// ============================================================
+
+@Composable
+fun NeonCard(
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    androidx.compose.material3.Card(
+        modifier = modifier,
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = NeonTheme.bg),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier.padding(12.dp),
+            content = content
+        )
+    }
+}
+
+/**
+ * Stat-box для значений — лейбл сверху приглушённо, число снизу яркое
+ * моноспейсом. [warn]=true подсвечивает красным (для Crest/Kurt overflow,
+ * threshold crossings).
+ */
+@Composable
+fun NeonStatBox(
+    label: String,
+    value: String,
+    warn: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.foundation.layout.Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            label,
+            color = NeonTheme.axisText,
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+        )
+        Text(
+            value,
+            color = if (warn) NeonTheme.alert else NeonTheme.textPrimary,
+            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+            fontFamily = FontFamily.Monospace,
+        )
+    }
+}
 
 // ============================================================
 // Bounds computation

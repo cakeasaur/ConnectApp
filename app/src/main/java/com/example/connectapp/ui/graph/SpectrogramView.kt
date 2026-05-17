@@ -83,17 +83,14 @@ fun SpectrogramCard(
     val nyquist = sampleRateHz / 2f
     val peakHz = remember(series.size, lastT) { findPeakFreq(series, sampleRateHz) }
 
-    Card(
-        modifier = modifier.fillMaxWidth().height(220.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(Modifier.padding(8.dp).fillMaxSize()) {
-            Text(
-                "STFT окно %d отсчётов · шаг %d · диапазон 0..%.1f Гц · доминанта %.2f Гц"
-                    .format(Locale.ROOT, FFT_SIZE, STEP_SAMPLES, nyquist, peakHz),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+    NeonCard(modifier = modifier.fillMaxWidth().height(220.dp)) {
+        Text(
+            "STFT окно %d отсчётов · шаг %d · диапазон 0..%.1f Гц · доминанта %.2f Гц"
+                .format(Locale.ROOT, FFT_SIZE, STEP_SAMPLES, nyquist, peakHz),
+            style = MaterialTheme.typography.bodySmall,
+            color = NeonTheme.axisText,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+        )
             Box(modifier = Modifier.fillMaxSize()) {
                 Canvas(Modifier.fillMaxSize()) {
                     val w = size.width; val h = size.height
@@ -131,7 +128,6 @@ fun SpectrogramCard(
                         .align(Alignment.BottomStart)
                 )
             }
-        }
     }
 }
 
@@ -207,12 +203,13 @@ private fun findPeakFreq(series: List<TimedPoint>, sampleRateHz: Float): Float {
 
 @Composable
 private fun EmptyHint(text: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth().height(80.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    NeonCard(modifier = Modifier.fillMaxWidth().height(80.dp)) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                text,
+                color = NeonTheme.axisText,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            )
         }
     }
 }

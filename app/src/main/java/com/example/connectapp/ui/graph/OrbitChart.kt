@@ -54,17 +54,14 @@ fun OrbitTripletCard(
     a2y: List<TimedPoint>,
     modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(Modifier.padding(8.dp)) {
-            Text(
-                "phase-портрет · trail $ORBIT_TRAIL точек, current point — жирная",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
+    NeonCard(modifier = modifier.fillMaxWidth()) {
+        Text(
+            "phase-портрет · trail $ORBIT_TRAIL точек, current point — жирная",
+            style = MaterialTheme.typography.bodySmall,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -72,23 +69,22 @@ fun OrbitTripletCard(
                 OrbitPanel(
                     title = "A1: ax vs ay",
                     xs = a1x, ys = a1y,
-                    accent = Color(0xFFDC3232),
+                    accent = Color(0xFFFF5252),
                     modifier = Modifier.weight(1f)
                 )
                 OrbitPanel(
                     title = "A2: ax vs ay",
                     xs = a2x, ys = a2y,
-                    accent = Color(0xFF3264DC),
+                    accent = Color(0xFF40C4FF),
                     modifier = Modifier.weight(1f)
                 )
                 OrbitPanel(
                     title = "Lissajous ax1↔ax2",
                     xs = a1x, ys = a2x,
-                    accent = Color(0xFF32B432),
+                    accent = Color(0xFF69F0AE),
                     modifier = Modifier.weight(1f)
                 )
             }
-        }
     }
 }
 
@@ -105,7 +101,7 @@ private fun OrbitPanel(
             title,
             style = MaterialTheme.typography.labelSmall,
             fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurface
+            color = NeonTheme.textPrimary
         )
         Box(
             modifier = Modifier
@@ -133,8 +129,8 @@ private fun OrbitCanvas(
     modifier: Modifier
 ) {
     val n = min(xs.size, ys.size)
-    val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-    val axisColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    val gridColor = NeonTheme.gridMajor
+    val axisColor = NeonTheme.axisText.copy(alpha = 0.6f)
 
     // Подготавливаем подмассивы за пределами Canvas — пары формируем
     // ПО TIMESTAMP, не по индексу. Иначе если xs и ys имеют разные размеры
