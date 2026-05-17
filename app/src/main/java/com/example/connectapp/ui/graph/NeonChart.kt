@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.example.connectapp.data.models.TimedPoint
+import com.example.connectapp.math.Fft
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -67,6 +68,16 @@ data class NeonChartConfig(
     val showSigma: Boolean = false,
     val thresholds: List<NeonThreshold> = emptyList(),
     val envelopeWindowPoints: Int = 20,
+    /**
+     * Phase-locked mode: автоматически подбирает временное окно равное
+     * 2 периодам доминирующей частоты (FFT первой серии). Сигнал
+     * "стабилизируется" — каждый кадр показывает ровно 2 цикла.
+     * Полезно для периодической вибрации; для апериодических данных
+     * (температура) — fallback на полный диапазон.
+     */
+    val phaseLock: Boolean = false,
+    /** Частота дискретизации для FFT в phase-lock режиме. */
+    val sampleRateHz: Float = 10f,
 )
 
 /**
@@ -119,9 +130,21 @@ fun NeonChart(
     }
 
     // Pre-computed bounds, кэшируется по списку и timestamp последней точки.
-    val lastT = nonEmpty.maxOf { it.data.last().t }
-    val firstT = nonEmpty.minOf { it.data.first().t }
+    val rawLastT = nonEmpty.maxOf { it.data.last().t }
+    val rawFirstT = nonEmpty.minOf { it.data.first().t }
+
+    // Phase-lock — переопределяем окно отображения до 2 периодов доминанты.
+    // Если периодичность не обнаружена (амплитуда пика мала) → fallback raw.
+    val (firstT, lastT) = remember(rawLastT, config.phaseLock) {
+        if (config.phaseLock) {
+            detectPhaseLockWindow(nonEmpty[0].data, config.sampleRateHz, rawFirstT, rawLastT)
+                ?: (rawFirstT to rawLastT)
+        } else rawFirstT to rawLastT
+    }
+
     val bounds = remember(nonEmpty.size, lastT, config.thresholds) {
+        // bounds считаются по ВСЕМ данным серий (не урезаем по phase-lock
+        // окну) — иначе Y-масштаб скачет при каждом новом отсчёте.
         computeBounds(nonEmpty, config.thresholds)
     }
 
@@ -321,6 +344,49 @@ private fun formatTick(v: Float): String = when {
     abs(v) >= 100f -> "%.0f".format(Locale.ROOT, v)
     abs(v) >= 10f -> "%.1f".format(Locale.ROOT, v)
     else -> "%.2f".format(Locale.ROOT, v)
+}
+
+/**
+ * Возвращает [firstT, lastT] окно длиной ровно 2 периода доминирующей
+ * частоты, или null если периодичность не обнаружена (амплитуда пика ниже
+ * threshold).
+ *
+ * Алгоритм:
+ *   1. FFT 64 последних отсчётов с окном Ханна (внутри [Fft]).
+ *   2. Поиск bin с максимальной амплитудой (skip DC).
+ *   3. T = N / (k * fs), где N=64, k=bin, fs=sampleRateHz.
+ *   4. Окно = 2*T*1000 ms, выровнено к концу данных.
+ *
+ * Если максимум слишком слабый (<10% от RMS) — считаем что периодики нет.
+ */
+private fun detectPhaseLockWindow(
+    data: List<TimedPoint>,
+    sampleRateHz: Float,
+    fallbackFirst: Long,
+    lastT: Long,
+): Pair<Long, Long>? {
+    val fftSize = 64
+    if (data.size < fftSize) return null
+    val arr = FloatArray(fftSize)
+    val from = data.size - fftSize
+    for (i in 0 until fftSize) arr[i] = data[from + i].value
+    val spectrum = Fft.amplitudeSpectrum(arr)
+    var peakBin = 1
+    var peakAmp = 0f
+    var sumAmp = 0f
+    for (i in 1 until spectrum.size) {
+        if (spectrum[i] > peakAmp) { peakAmp = spectrum[i]; peakBin = i }
+        sumAmp += spectrum[i]
+    }
+    val avgAmp = sumAmp / (spectrum.size - 1)
+    // Heuristic: пик должен быть хотя бы в 3 раза выше среднего — иначе
+    // это шум, а не периодика.
+    if (peakAmp < avgAmp * 3f || peakBin < 1) return null
+    val periodSec = fftSize / (peakBin * sampleRateHz)
+    if (periodSec <= 0f || periodSec.isNaN()) return null
+    val windowMs = (2 * periodSec * 1000).toLong()
+    val first = (lastT - windowMs).coerceAtLeast(fallbackFirst)
+    return if (lastT > first) first to lastT else null
 }
 
 /** Линия с glow-эффектом: 2 прохода Paint — wide blurred halo + thin solid core. */

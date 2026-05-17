@@ -206,10 +206,12 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
     var monitoring by remember { mutableStateOf(false) }
     var paused by remember { mutableStateOf(false) }
     var window by remember { mutableStateOf(TimeWindow.ALL) }
-    // Overlays для NeonChart — научный режим: envelope / ±1σ / threshold.
+    // Overlays для NeonChart — научный режим: envelope / ±1σ / threshold /
+    // phase-lock (автоподгонка окна к 2 периодам доминирующей частоты).
     var showEnvelope by remember { mutableStateOf(false) }
     var showSigma by remember { mutableStateOf(false) }
     var showThreshold by remember { mutableStateOf(false) }
+    var phaseLock by remember { mutableStateOf(false) }
     // Shared crosshair-state — тап на любом из 3 line charts двигает линию
     // во ВСЕХ. Объект (не StateFlow) держит Long? state без боксинга.
     val crosshair = remember { CrosshairBus() }
@@ -391,6 +393,12 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                     label = { Text("⚠ alert") },
                     colors = chipColors
                 )
+                FilterChip(
+                    selected = phaseLock,
+                    onClick = { phaseLock = !phaseLock },
+                    label = { Text("phase-lock") },
+                    colors = chipColors
+                )
             }
 
             // Neon-палитра — насыщенные неоновые цвета поверх тёмного фона
@@ -407,14 +415,16 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                 showSigma = showSigma,
                 thresholds = if (showThreshold) listOf(
                     NeonThreshold(28f, "overheat", Color(0xFFFFAA00))
-                ) else emptyList()
+                ) else emptyList(),
+                phaseLock = phaseLock,
             )
             val accelConfig = NeonChartConfig(
                 showEnvelope = showEnvelope,
                 showSigma = showSigma,
                 thresholds = if (showThreshold) listOf(
                     NeonThreshold(1100f, "vibration", Color(0xFFFF8800), NeonAxis.RIGHT)
-                ) else emptyList()
+                ) else emptyList(),
+                phaseLock = phaseLock,
             )
 
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
