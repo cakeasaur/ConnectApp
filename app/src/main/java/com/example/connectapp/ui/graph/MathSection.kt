@@ -26,6 +26,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -33,6 +35,7 @@ import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.math.CrossCorrelation
 import com.example.connectapp.math.Fft
 import com.example.connectapp.math.HeatFlux
+import com.example.connectapp.math.Integration
 import com.example.connectapp.math.Kalman1D
 import com.example.connectapp.math.Orientation
 import com.example.connectapp.math.computeVibrationStats
@@ -40,11 +43,11 @@ import kotlin.math.min
 import java.util.Locale
 
 /**
- * Частота дискретизации сенсоров (Гц). Прошивка PIC24 шлёт 10 Hz, mock —
- * тоже 10 Hz. Если поменяешь частоту опроса — поменяй здесь, иначе ось
- * частот FFT и расчёт лагов в секундах будут врать.
+ * DEPRECATED-fallback. Реальное значение приходит параметром в MathSection
+ * из настроек DataStore (`AppSettings.sampleRateHz`). Оставляем для
+ * локальных тестов и обратной совместимости.
  */
-private const val SAMPLE_RATE_HZ = 10f
+private const val DEFAULT_SAMPLE_RATE_HZ = 10f
 
 /**
  * Раздел "Математический анализ" под основными графиками.
@@ -71,24 +74,24 @@ fun MathSection(
     a1z: List<TimedPoint>,
     a2x: List<TimedPoint>,
     a2y: List<TimedPoint>,
-    generation: Int = 0
+    generation: Int = 0,
+    advanced: Boolean = false,
+    sampleRateHz: Float = DEFAULT_SAMPLE_RATE_HZ,
 ) {
     Spacer(Modifier.height(8.dp))
     Text("Математический анализ", style = MaterialTheme.typography.titleLarge)
     Text(
-        "FFT / RMS / Crest / Kurtosis / Tilt / Cross-correlation / Heat flux / Kalman fusion",
+        if (advanced)
+            "FFT / RMS / Crest / Kurtosis / Tilt / Cross-correlation / Heat flux / Kalman fusion"
+        else
+            "RMS / Crest / Kurtosis / Tilt / Heat flux  ·  включи Advanced для FFT и спектрограмм",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
 
-    Text("Спектр вибрации ax1 (FFT, окно Ханна)", style = MaterialTheme.typography.titleMedium)
-    FftCard(a1x)
-
-    Text(
-        "Спектрограмма ax1 (STFT-waterfall, turbo-палитра)",
-        style = MaterialTheme.typography.titleMedium
-    )
-    SpectrogramCard(series = a1x, sampleRateHz = SAMPLE_RATE_HZ)
+    // === БАЗОВЫЙ НАБОР (всегда виден) ===
+    // Это то что преподаватель/пользователь поймёт без знания DSP:
+    // числа RMS/Crest/Kurt, наклон в градусах, тепловой поток в Вт/м².
 
     Text("Дескрипторы вибрации (ISO 10816)", style = MaterialTheme.typography.titleMedium)
     VibrationStatsCard("ax1", a1x)
@@ -96,6 +99,23 @@ fun MathSection(
 
     Text("Ориентация (наклон A1)", style = MaterialTheme.typography.titleMedium)
     TiltCard(a1x, a1y, a1z)
+
+    Text("Тепловой поток (закон Фурье)", style = MaterialTheme.typography.titleMedium)
+    HeatFluxCard(t1, t2)
+
+    // === ADVANCED (под флагом) ===
+    // FFT, STFT, фазовые портреты, Kalman, интеграция — для тех кто
+    // понимает что смотреть. По умолчанию скрыты — не загромождают экран.
+    if (!advanced) return
+
+    Text("Спектр вибрации ax1 (FFT, окно Ханна)", style = MaterialTheme.typography.titleMedium)
+    FftCard(a1x, sampleRateHz)
+
+    Text(
+        "Спектрограмма ax1 (STFT-waterfall, turbo-палитра)",
+        style = MaterialTheme.typography.titleMedium
+    )
+    SpectrogramCard(series = a1x, sampleRateHz = sampleRateHz)
 
     Text(
         "Orbit / Lissajous (фазовые портреты)",
@@ -110,13 +130,13 @@ fun MathSection(
     PersistenceCard(series = a1x, generation = generation)
 
     Text("Cross-correlation ax1 ↔ ax2", style = MaterialTheme.typography.titleMedium)
-    CrossCorrCard(a1x, a2x)
-
-    Text("Тепловой поток (закон Фурье)", style = MaterialTheme.typography.titleMedium)
-    HeatFluxCard(t1, t2)
+    CrossCorrCard(a1x, a2x, sampleRateHz)
 
     Text("Слияние акселерометров (Kalman 1D)", style = MaterialTheme.typography.titleMedium)
     KalmanFusionCard(a1x, a2x, generation)
+
+    Text("Скорость и смещение A1 (∫a·dt, ∫∫a·dt²)", style = MaterialTheme.typography.titleMedium)
+    VelocityCard(ax = a1x, ay = a1y, label = "A1")
 }
 
 // ============================================================
@@ -124,15 +144,13 @@ fun MathSection(
 // ============================================================
 
 @Composable
-private fun FftCard(series: List<TimedPoint>) {
+private fun FftCard(series: List<TimedPoint>, sampleRateHz: Float) {
     if (series.size < 32) {
         EmptyCard("Собираю данные… нужно ≥32 отсчётов")
         return
     }
-    // ВСЁ вычисление вместе с аллокацией FloatArray — внутри remember.
-    // Ключ: размер + timestamp последней точки. Список TimedPoint
-    // создаётся новый каждый recompose (StateFlow), поэтому ссылочное
-    // равенство `series` всегда false → нужен стабильный ключ.
+    var logScale by remember { mutableStateOf(false) }
+
     val winSize = min(series.size, 256)
     val lastT = series.last().t
     val spectrum = remember(series.size, lastT) {
@@ -142,65 +160,135 @@ private fun FftCard(series: List<TimedPoint>) {
         Fft.amplitudeSpectrum(arr)
     }
     val fftSize = nearestPow2Down(winSize)
-    val nyquist = SAMPLE_RATE_HZ / 2f
+    val nyquist = sampleRateHz / 2f
 
-    // Поиск доминирующего пика (без бина 0 — это DC).
     var peakBin = 1
     var peakAmp = 0f
     for (i in 1 until spectrum.size) {
         if (spectrum[i] > peakAmp) { peakAmp = spectrum[i]; peakBin = i }
     }
-    val peakHz = Fft.binHz(peakBin, SAMPLE_RATE_HZ, fftSize)
+    val peakHz = Fft.binHz(peakBin, sampleRateHz, fftSize)
 
-    NeonCard(modifier = Modifier.fillMaxWidth().height(200.dp)) {
-        Text(
-            "пик: %.2f Гц · амплитуда %.1f · окно %d отсчётов · fs=%.0f Гц"
-                .format(Locale.ROOT, peakHz, peakAmp, fftSize, SAMPLE_RATE_HZ),
-            style = MaterialTheme.typography.bodySmall,
-            color = NeonTheme.axisText,
-            fontFamily = FontFamily.Monospace
-        )
+    NeonCard(modifier = Modifier.fillMaxWidth().height(220.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Text(
+                "пик: %.2f Гц · %.1f · окно %d · fs=%.0f Гц"
+                    .format(Locale.ROOT, peakHz, peakAmp, fftSize, sampleRateHz),
+                style = MaterialTheme.typography.bodySmall,
+                color = NeonTheme.axisText,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.weight(1f)
+            )
+            androidx.compose.material3.FilterChip(
+                selected = logScale,
+                onClick = { logScale = !logScale },
+                label = { Text("dB", style = MaterialTheme.typography.labelSmall) }
+            )
+        }
         Spacer(Modifier.height(4.dp))
         FftSpectrumBars(
             spectrum = spectrum,
             nyquistHz = nyquist,
+            peakBin = peakBin,
+            logScale = logScale,
             modifier = Modifier.fillMaxSize()
         )
     }
 }
 
-/** Рисует столбики спектра. X — частота 0..Nyquist, Y — амплитуда (auto-scale). */
+/**
+ * Столбики спектра с осью X (Гц), опциональной dB-шкалой и маркерами гармоник.
+ *
+ * Ось X: подписи 0, Nyquist/2, Nyquist.
+ * dB-шкала: 20·log10(amp/max), диапазон -60..0 dB.
+ * Гармоники: пунктирные линии на 2f, 3f, 4f от доминирующего пика.
+ */
 @Composable
-private fun FftSpectrumBars(spectrum: FloatArray, nyquistHz: Float, modifier: Modifier) {
-    val barColor = NeonTheme.accent
-    val gridColor = NeonTheme.gridMajor
+private fun FftSpectrumBars(
+    spectrum: FloatArray,
+    nyquistHz: Float,
+    peakBin: Int,
+    logScale: Boolean,
+    modifier: Modifier,
+) {
+    val barColor      = NeonTheme.accent
+    val gridColor     = NeonTheme.gridMajor
+    val harmColor     = NeonTheme.warn.copy(alpha = 0.75f)
+    val axisTextColor = NeonTheme.axisText
+    val DB_RANGE      = 60f
+
+    // Paint кэшируется по density — пересоздаётся только при смене плотности
+    // экрана (rotation на foldable, split screen). textSize задаётся один
+    // раз в remember-блоке, а не на каждый draw.
+    val localDensity = androidx.compose.ui.platform.LocalDensity.current.density
+    val textPaint = remember(localDensity) {
+        android.graphics.Paint().apply {
+            color = android.graphics.Color.argb(
+                (axisTextColor.alpha * 255).toInt(),
+                (axisTextColor.red   * 255).toInt(),
+                (axisTextColor.green * 255).toInt(),
+                (axisTextColor.blue  * 255).toInt()
+            )
+            textSize = 9f * localDensity
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+    }
+
     Canvas(modifier = modifier) {
         if (spectrum.isEmpty()) return@Canvas
+        val n     = spectrum.size
+        val w     = size.width
+        val hPlot = (size.height - 16f).coerceAtLeast(1f)
+        val barW  = w / n
         val maxAmp = (spectrum.maxOrNull() ?: 1f).coerceAtLeast(1e-6f)
-        val n = spectrum.size
-        val w = size.width
-        val h = size.height
-        val barW = w / n
 
-        // Сетка по Y: 4 горизонтальных линии.
+        fun ampToY(amp: Float): Float = if (logScale) {
+            val dB = (20f * kotlin.math.log10((amp / maxAmp).coerceAtLeast(1e-9f)))
+                .coerceIn(-DB_RANGE, 0f)
+            hPlot * (1f - (dB + DB_RANGE) / DB_RANGE)
+        } else {
+            hPlot * (1f - (amp / maxAmp).coerceIn(0f, 1f))
+        }
+
         for (i in 1..3) {
-            val y = h * i / 4f
-            drawLine(gridColor, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
+            drawLine(gridColor, Offset(0f, hPlot * i / 4f), Offset(w, hPlot * i / 4f), strokeWidth = 0.5f)
         }
 
         for (i in 0 until n) {
-            val amp = spectrum[i] / maxAmp
-            val barH = amp * h
+            val top = ampToY(spectrum[i])
             drawRect(
                 color = barColor,
-                topLeft = Offset(i * barW, h - barH),
-                size = Size(barW.coerceAtLeast(1f) - 0.5f, barH)
+                topLeft = Offset(i * barW, top),
+                size = Size(barW.coerceAtLeast(1f) - 0.5f, (hPlot - top).coerceAtLeast(0f))
             )
         }
 
-        // Заголовок карточки сообщает доминирующий пик в Hz, поэтому
-        // подписи частот на самом Canvas не рисуем — экономим место.
-        @Suppress("UNUSED_VARIABLE") val nh = nyquistHz
+        if (peakBin > 0) {
+            for (mult in 2..4) {
+                val bin = peakBin * mult
+                if (bin < n) {
+                    val x = bin * barW + barW / 2f
+                    drawLine(
+                        harmColor, Offset(x, 0f), Offset(x, hPlot), strokeWidth = 1.2f,
+                        pathEffect = androidx.compose.ui.graphics.PathEffect
+                            .dashPathEffect(floatArrayOf(4f, 3f))
+                    )
+                }
+            }
+        }
+
+        listOf(0f, nyquistHz / 2f, nyquistHz).forEach { hz ->
+            val x = if (nyquistHz > 0f) (hz / nyquistHz) * w else 0f
+            drawLine(NeonTheme.axisLine, Offset(x, hPlot), Offset(x, hPlot + 4f), strokeWidth = 1f)
+            val label = if (hz == 0f) "0" else "%.1fГц".format(Locale.ROOT, hz)
+            val tw = textPaint.measureText(label)
+            drawIntoCanvas { it.nativeCanvas.drawText(label, (x - tw / 2f).coerceIn(0f, w - tw), hPlot + 13f, textPaint) }
+        }
     }
 }
 
@@ -342,7 +430,7 @@ private fun BubbleLevel(pitch: Float, roll: Float, modifier: Modifier) {
 // ============================================================
 
 @Composable
-private fun CrossCorrCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
+private fun CrossCorrCard(a1: List<TimedPoint>, a2: List<TimedPoint>, sampleRateHz: Float) {
     val n = min(a1.size, a2.size)
     if (n < 32) {
         EmptyCard("Собираю данные… нужно ≥32 пар отсчётов")
@@ -366,7 +454,7 @@ private fun CrossCorrCard(a1: List<TimedPoint>, a2: List<TimedPoint>) {
         CrossCorrelation.normalized(x, y, maxLag)
     }
     val (bestLag, bestVal) = CrossCorrelation.bestLag(corr, maxLag)
-    val lagSec = bestLag / SAMPLE_RATE_HZ
+    val lagSec = bestLag / sampleRateHz
 
     NeonCard(modifier = Modifier.fillMaxWidth().height(180.dp)) {
         Text(
@@ -515,6 +603,101 @@ private fun KalmanFusionCard(a1: List<TimedPoint>, a2: List<TimedPoint>, generat
             NeonStatBox("x̂", "%+.1f".format(Locale.ROOT, estimate.first))
             NeonStatBox("P", "%.3f".format(Locale.ROOT, estimate.second))
         }
+    }
+}
+
+// ============================================================
+// Velocity / Displacement — двойное интегрирование акселерометра
+// ============================================================
+
+/**
+ * Два чарта: скорость (∫a·dt) и смещение (∫v·dt = ∫∫a·dt²).
+ *
+ * Единицы — LSB·с и LSB·с², не физические мм/с и мм. Для перевода
+ * нужна калибровка акселерометра (sensitivity, мг/LSB). Без калибровки
+ * сигнал полезен для СРАВНИТЕЛЬНОГО анализа: "стало больше/меньше",
+ * "совпадает ли с предыдущей сессией".
+ *
+ * Drift-коррекция (linear detrend) встроена в [Integration.integrate] —
+ * DC-смещение не накапливается. На тихом (~покой) сигнале оба чарта
+ * будут около нуля, при вибрации покажут волны.
+ */
+@Composable
+private fun VelocityCard(ax: List<TimedPoint>, ay: List<TimedPoint>, label: String) {
+    if (ax.size < 10) {
+        EmptyCard("$label: нужно ≥10 отсчётов")
+        return
+    }
+    val lastTax = ax.last().t
+    val lastTay = ay.lastOrNull()?.t ?: lastTax
+
+    // Все четыре ряда в одном remember: dispX/dispY зависят от velX/velY,
+    // поэтому объединяем — иначе вложенный remember со stale-ключами мог
+    // пересчитывать displacement позже velocity на один recompose.
+    val integrated = remember(ax.size, lastTax, ay.size, lastTay) {
+        val vx = Integration.integrate(ax)
+        val vy = Integration.integrate(ay)
+        val dx = if (vx.size >= 2) Integration.integrate(vx) else emptyList<TimedPoint>()
+        val dy = if (vy.size >= 2) Integration.integrate(vy) else emptyList<TimedPoint>()
+        arrayOf(vx, vy, dx, dy)
+    }
+    val velX  = integrated[0]
+    val velY  = integrated[1]
+    val dispX = integrated[2]
+    val dispY = integrated[3]
+
+    val velColors  = listOf(androidx.compose.ui.graphics.Color(0xFFFF6B6B), androidx.compose.ui.graphics.Color(0xFF69F0AE))
+    val dispColors = listOf(androidx.compose.ui.graphics.Color(0xFFFFB74D), androidx.compose.ui.graphics.Color(0xFF80CBC4))
+
+    NeonCard(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "$label скорость (LSB·с)",
+            style = MaterialTheme.typography.labelMedium,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+        ) {
+            NeonChart(
+                seriesList = listOf(
+                    NeonSeries(velX, velColors[0], "vx"),
+                    NeonSeries(velY, velColors[1], "vy"),
+                ),
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "$label смещение (LSB·с²)",
+            style = MaterialTheme.typography.labelMedium,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+        ) {
+            NeonChart(
+                seriesList = listOf(
+                    NeonSeries(dispX, dispColors[0], "dx"),
+                    NeonSeries(dispY, dispColors[1], "dy"),
+                ),
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            "detrend-коррекция дрейфа включена · физические единицы требуют калибровки LSB→g",
+            style = MaterialTheme.typography.bodySmall,
+            color = NeonTheme.axisText,
+            fontFamily = FontFamily.Monospace
+        )
     }
 }
 

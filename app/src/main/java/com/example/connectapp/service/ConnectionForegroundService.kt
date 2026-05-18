@@ -105,47 +105,44 @@ class ConnectionForegroundService : Service() {
         private const val NOTIFICATION_ID = 42
         private const val EXTRA_TITLE = "title"
 
-        /**
-         * Reference counter — сколько "владельцев" (BT/Wi-Fi/USB VM) сейчас
-         * считают что сервис должен работать. Без него сценарий:
-         *   - BT-сессия активна → BT-VM запустила сервис
-         *   - Пользователь открыл USB → USB-сессия активна → USB-VM тоже
-         *     "запустила" (idempotent)
-         *   - BT отключился → BT-VM позвала stop() → СЕРВИС УБИВАЕТСЯ,
-         *     хотя USB-сессия живая.
-         * С refcount: stop() уменьшает счётчик, сервис реально умирает только
-         * когда counter == 0.
-         */
-        @Volatile private var refCount = 0
-        private val refLock = Any()
+        // Owner-set вместо чистого счётчика. Раньше двойной start() от одного
+        // VM (например, при быстром reconnect) увеличивал refCount, а
+        // соответствующий stop() уменьшал его только на 1 — счётчик оставался
+        // > 0, сервис не умирал, висел "вечный" notification.
+        // Теперь каждый VM передаёт уникальный owner-key; повторный start()
+        // от того же владельца — no-op, повторный stop() — тоже.
+        private val owners = HashSet<String>()
+        private val ownersLock = Any()
 
         /**
          * Запустить сервис (или обновить notification, если уже работает).
-         * Повторный вызов от того же владельца — TODO: пока считаем что каждый
-         * VM не дёргает start() двойным образом (это гарантируется state-машиной
-         * в VM: запуск только на edge not-Connected → Connected).
+         * [owner] — уникальный ключ источника (например, "bt", "wifi", "usb").
+         * Повторный вызов с тем же owner'ом не увеличит внутренний счётчик.
          */
-        fun start(context: Context, title: String) {
-            synchronized(refLock) { refCount++ }
+        fun start(context: Context, owner: String, title: String) {
+            val firstOwner = synchronized(ownersLock) {
+                val wasEmpty = owners.isEmpty()
+                owners.add(owner)
+                wasEmpty
+            }
             val intent = Intent(context, ConnectionForegroundService::class.java)
                 .putExtra(EXTRA_TITLE, title)
             runCatching {
-                // На Android 12+ запуск fg-service из background может
-                // кинуть ForegroundServiceStartNotAllowedException. Ловим,
-                // чтобы не убить процесс. У нас старт идёт только из активной
-                // VM (которая жива пока Activity видна), так что обычно ок.
+                // На Android 12+ запуск fg-service из background может кинуть
+                // ForegroundServiceStartNotAllowedException. У нас старт идёт
+                // только из активной VM (живой пока Activity видна), так что ок.
                 ContextCompat.startForegroundService(context, intent)
             }.onFailure {
-                // Откатим счётчик при фейле — иначе stop() не сработает.
-                synchronized(refLock) { refCount-- }
+                // Откатим, если этот вызов добавил нового владельца.
+                if (firstOwner) synchronized(ownersLock) { owners.remove(owner) }
             }
         }
 
-        /** Уменьшить счётчик. Реально стопаем сервис только когда counter = 0. */
-        fun stop(context: Context) {
-            val shouldStop = synchronized(refLock) {
-                if (refCount > 0) refCount--
-                refCount == 0
+        /** Снять владельца. Сервис реально умирает, когда последний снят. */
+        fun stop(context: Context, owner: String) {
+            val shouldStop = synchronized(ownersLock) {
+                owners.remove(owner)
+                owners.isEmpty()
             }
             if (shouldStop) {
                 context.stopService(Intent(context, ConnectionForegroundService::class.java))

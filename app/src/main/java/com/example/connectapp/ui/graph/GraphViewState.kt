@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.example.connectapp.data.models.TimedPoint
+import com.example.connectapp.utils.PerfTrace
 
 /**
  * Возвращает [value] если [paused] = false; иначе — значение, захваченное
@@ -44,15 +45,19 @@ fun formatWindow(windowMs: Long): String {
  * Возвращает суффикс серии, попадающий в окно длиной [windowMs] относительно
  * последней точки. Если [windowMs] ≤ 0 — возвращает [series] как есть.
  *
- * Алгоритм: считаем cutoff = lastT - windowMs, ищем первый индекс с t ≥ cutoff
- * линейно с конца (timestamps монотонно возрастают, поэтому это O(window_pts)
- * в худшем случае — обычно <100 для 30с окна при 10 Hz).
+ * Алгоритм: считаем cutoff = lastT - windowMs, бинарный поиск первого
+ * индекса с t ≥ cutoff. O(log N) вместо прежнего O(window) линейного
+ * прохода — при больших окнах (5+ минут × 10 Hz = 3000+ точек) или при
+ * windowMs близком к полному диапазону линейный поиск проходил почти
+ * по всей серии каждый recompose × 8 каналов.
  */
-fun applyWindow(series: List<TimedPoint>, windowMs: Long): List<TimedPoint> {
-    if (windowMs <= 0L || series.isEmpty()) return series
+fun applyWindow(series: List<TimedPoint>, windowMs: Long): List<TimedPoint> = PerfTrace.measure("applyWindow") {
+    if (windowMs <= 0L || series.isEmpty()) return@measure series
     val cutoff = series.last().t - windowMs
-    // Линейный проход с конца — короче чем binarySearch для small window.
-    var from = series.size - 1
-    while (from > 0 && series[from - 1].t >= cutoff) from--
-    return if (from == 0) series else series.subList(from, series.size)
+    // binarySearchBy возвращает индекс точного совпадения ИЛИ
+    // -(insertion_point) - 1. Нам нужен первый индекс с t ≥ cutoff —
+    // это либо найденный (совпадение), либо insertion_point.
+    val raw = series.binarySearchBy(cutoff) { it.t }
+    val from = if (raw >= 0) raw else -raw - 1
+    return@measure if (from <= 0) series else series.subList(from, series.size)
 }

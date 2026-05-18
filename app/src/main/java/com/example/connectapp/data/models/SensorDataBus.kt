@@ -3,7 +3,6 @@ package com.example.connectapp.data.models
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 
 /**
  * Точка ([t], value) — храним метку времени, а не индекс, чтобы графики
@@ -16,49 +15,63 @@ data class TimedPoint(val t: Long, val value: Float)
  *
  * Окно фиксированное ([MAX_POINTS]), старые точки выбрасываются — иначе при
  * долгом monitor-режиме список вырастет в гигабайты.
+ *
+ * Внутри хранится в [ArrayDeque] (амортизированно O(1) на push+pop), а в
+ * публичный StateFlow эмитим snapshot-копией. Старая реализация
+ * `(it + point).takeLast(MAX)` делала 2 alloc'а на каждый отсчёт и при
+ * 10 Hz создавала ощутимое давление на GC.
  */
 object SensorDataBus {
 
     /** Размер окна по точкам. ~10 минут при 10 Hz / ~5 минут при 20 Hz. */
     const val MAX_POINTS = 600
 
-    private val _temp1 = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val temp1: StateFlow<List<TimedPoint>> = _temp1.asStateFlow()
+    private class Channel {
+        val deque = ArrayDeque<TimedPoint>(MAX_POINTS + 1)
+        val flow = MutableStateFlow<List<TimedPoint>>(emptyList())
+    }
 
-    private val _temp2 = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val temp2: StateFlow<List<TimedPoint>> = _temp2.asStateFlow()
+    private val temp1Ch = Channel()
+    private val temp2Ch = Channel()
+    private val a1xCh = Channel(); private val a1yCh = Channel(); private val a1zCh = Channel()
+    private val a2xCh = Channel(); private val a2yCh = Channel(); private val a2zCh = Channel()
 
-    private val _accel1X = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val accel1X: StateFlow<List<TimedPoint>> = _accel1X.asStateFlow()
-    private val _accel1Y = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val accel1Y: StateFlow<List<TimedPoint>> = _accel1Y.asStateFlow()
-    private val _accel1Z = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val accel1Z: StateFlow<List<TimedPoint>> = _accel1Z.asStateFlow()
-
-    private val _accel2X = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val accel2X: StateFlow<List<TimedPoint>> = _accel2X.asStateFlow()
-    private val _accel2Y = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val accel2Y: StateFlow<List<TimedPoint>> = _accel2Y.asStateFlow()
-    private val _accel2Z = MutableStateFlow<List<TimedPoint>>(emptyList())
-    val accel2Z: StateFlow<List<TimedPoint>> = _accel2Z.asStateFlow()
+    val temp1: StateFlow<List<TimedPoint>> = temp1Ch.flow.asStateFlow()
+    val temp2: StateFlow<List<TimedPoint>> = temp2Ch.flow.asStateFlow()
+    val accel1X: StateFlow<List<TimedPoint>> = a1xCh.flow.asStateFlow()
+    val accel1Y: StateFlow<List<TimedPoint>> = a1yCh.flow.asStateFlow()
+    val accel1Z: StateFlow<List<TimedPoint>> = a1zCh.flow.asStateFlow()
+    val accel2X: StateFlow<List<TimedPoint>> = a2xCh.flow.asStateFlow()
+    val accel2Y: StateFlow<List<TimedPoint>> = a2yCh.flow.asStateFlow()
+    val accel2Z: StateFlow<List<TimedPoint>> = a2zCh.flow.asStateFlow()
 
     fun addTemperature(slot: Int, value: Float, ts: Long = System.currentTimeMillis()) {
-        val point = TimedPoint(ts, value)
-        val target = if (slot == 2) _temp2 else _temp1
-        target.update { (it + point).takeLast(MAX_POINTS) }
+        push(if (slot == 2) temp2Ch else temp1Ch, TimedPoint(ts, value))
     }
 
     fun addAccel(slot: Int, x: Float, y: Float, z: Float, ts: Long = System.currentTimeMillis()) {
-        val px = TimedPoint(ts, x); val py = TimedPoint(ts, y); val pz = TimedPoint(ts, z)
         if (slot == 2) {
-            _accel2X.update { (it + px).takeLast(MAX_POINTS) }
-            _accel2Y.update { (it + py).takeLast(MAX_POINTS) }
-            _accel2Z.update { (it + pz).takeLast(MAX_POINTS) }
+            push(a2xCh, TimedPoint(ts, x))
+            push(a2yCh, TimedPoint(ts, y))
+            push(a2zCh, TimedPoint(ts, z))
         } else {
-            _accel1X.update { (it + px).takeLast(MAX_POINTS) }
-            _accel1Y.update { (it + py).takeLast(MAX_POINTS) }
-            _accel1Z.update { (it + pz).takeLast(MAX_POINTS) }
+            push(a1xCh, TimedPoint(ts, x))
+            push(a1yCh, TimedPoint(ts, y))
+            push(a1zCh, TimedPoint(ts, z))
         }
+    }
+
+    private fun push(ch: Channel, point: TimedPoint) {
+        val snapshot = com.example.connectapp.utils.PerfTrace.measure("bus.push") {
+            synchronized(ch.deque) {
+                ch.deque.addLast(point)
+                if (ch.deque.size > MAX_POINTS) ch.deque.removeFirst()
+                // toList() копирует только один раз — StateFlow требует
+                // нового объекта, иначе подписчики не получат уведомление.
+                ch.deque.toList()
+            }
+        }
+        ch.flow.value = snapshot
     }
 
     /**
@@ -70,14 +83,10 @@ object SensorDataBus {
     val generation: StateFlow<Int> = _generation.asStateFlow()
 
     fun clear() {
-        _temp1.value = emptyList()
-        _temp2.value = emptyList()
-        _accel1X.value = emptyList()
-        _accel1Y.value = emptyList()
-        _accel1Z.value = emptyList()
-        _accel2X.value = emptyList()
-        _accel2Y.value = emptyList()
-        _accel2Z.value = emptyList()
+        for (ch in arrayOf(temp1Ch, temp2Ch, a1xCh, a1yCh, a1zCh, a2xCh, a2yCh, a2zCh)) {
+            synchronized(ch.deque) { ch.deque.clear() }
+            ch.flow.value = emptyList()
+        }
         _generation.value += 1
     }
 }

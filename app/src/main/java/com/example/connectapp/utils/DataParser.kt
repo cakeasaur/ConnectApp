@@ -75,41 +75,34 @@ object DataParser {
         if (isCalib) return null
 
         // 2. Firmware CSV — оба сенсора.
-        firmwareMonitorRegex.find(line)?.let { m ->
-            val t1 = m.groupValues[1].toFloatOrNull() ?: return@let
-            val t2 = m.groupValues[2].toFloatOrNull()
-            val a1x = m.groupValues[3].toFloatOrNull()
-            val a1y = m.groupValues[4].toFloatOrNull()
-            val a1z = m.groupValues[5].toFloatOrNull()
-            val a2x = m.groupValues[6].toFloatOrNull()
-            val a2y = m.groupValues[7].toFloatOrNull()
-            val a2z = m.groupValues[8].toFloatOrNull()
-            return SensorData(t1, t2, a1x, a1y, a1z, a2x, a2y, a2z)
-        }
+        firmwareMonitorRegex.find(line)?.toEightSensors()?.let { return it }
 
         // 3. Bare 8 чисел — пробуем раньше bare4, иначе короткий regex
         // успешно сматчится по первым 4 числам.
-        bare8Regex.find(line)?.let { m ->
-            val t1 = m.groupValues[1].toFloatOrNull() ?: return@let
-            val t2 = m.groupValues[2].toFloatOrNull()
-            val a1x = m.groupValues[3].toFloatOrNull()
-            val a1y = m.groupValues[4].toFloatOrNull()
-            val a1z = m.groupValues[5].toFloatOrNull()
-            val a2x = m.groupValues[6].toFloatOrNull()
-            val a2y = m.groupValues[7].toFloatOrNull()
-            val a2z = m.groupValues[8].toFloatOrNull()
-            return SensorData(t1, t2, a1x, a1y, a1z, a2x, a2y, a2z)
-        }
+        bare8Regex.find(line)?.toEightSensors()?.let { return it }
 
         // 4. Bare 4 числа — temp + первый акселерометр.
         bare4Regex.find(line)?.let { m ->
-            val t1 = m.groupValues[1].toFloatOrNull() ?: return@let
-            val ax = m.groupValues[2].toFloatOrNull()
-            val ay = m.groupValues[3].toFloatOrNull()
-            val az = m.groupValues[4].toFloatOrNull()
-            return SensorData(temperature1 = t1, accel1X = ax, accel1Y = ay, accel1Z = az)
+            val t1 = m.f(1) ?: return@let
+            return SensorData(
+                temperature1 = t1,
+                accel1X = m.f(2), accel1Y = m.f(3), accel1Z = m.f(4)
+            )
         }
 
         return null
+    }
+
+    /** Группа [i] → Float? через одну точку, чтобы не дублировать выражение. */
+    private fun MatchResult.f(i: Int): Float? = groupValues[i].toFloatOrNull()
+
+    /** "T1;T2;A1X;A1Y;A1Z;A2X;A2Y;A2Z" — общая схема для firmware-CSV и bare8. */
+    private fun MatchResult.toEightSensors(): SensorData? {
+        val t1 = f(1) ?: return null
+        return SensorData(
+            temperature1 = t1, temperature2 = f(2),
+            accel1X = f(3), accel1Y = f(4), accel1Z = f(5),
+            accel2X = f(6), accel2Y = f(7), accel2Z = f(8)
+        )
     }
 }

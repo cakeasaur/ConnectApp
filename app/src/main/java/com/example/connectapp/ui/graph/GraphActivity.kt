@@ -1,6 +1,7 @@
 package com.example.connectapp.ui.graph
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -30,8 +31,12 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -51,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +81,27 @@ import java.util.Locale
 
 class GraphActivity : ComponentActivity() {
 
+    // Статус долгих операций: null = простой, "..." = текст для пользователя.
+    // Показывается LinearProgressIndicator сверху + подпись.
+    //
+    // Refcount: если запустить 2 операции одновременно (PDF + CSV) — обе
+    // вызовут push/pop через withLoading. Индикатор скрывается только когда
+    // ВСЕ операции завершились. Иначе finally от первой сбрасывал бы статус
+    // пока вторая ещё идёт.
+    private val loadingStatus = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    private val loadingOps = mutableListOf<String>()  // только из Main потока
+
+    private inline fun <T> withLoading(label: String, block: () -> T): T {
+        loadingOps.add(label)
+        loadingStatus.value = loadingOps.last()
+        try {
+            return block()
+        } finally {
+            loadingOps.remove(label)
+            loadingStatus.value = loadingOps.lastOrNull()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -82,7 +109,9 @@ class GraphActivity : ComponentActivity() {
                 GraphScreen(
                     onBack = { finish() },
                     onExport = { exportCsv() },
-                    onExportPdf = { exportPdf() }
+                    onExportPdf = { exportPdf() },
+                    onScreenshot = { shareScreenshot() },
+                    loadingStatus = loadingStatus,
                 )
             }
         }
@@ -105,16 +134,18 @@ class GraphActivity : ComponentActivity() {
             return
         }
         lifecycleScope.launch {
-            val file = withContext(Dispatchers.IO) {
-                runCatching {
-                    cacheDir.listFiles { f -> f.name.startsWith("sensor_report_") && f.name.endsWith(".pdf") }
-                        ?.forEach { it.delete() }
+            val file = withLoading("Генерация PDF-отчёта...") {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        cacheDir.listFiles { f -> f.name.startsWith("sensor_report_") && f.name.endsWith(".pdf") }
+                            ?.forEach { it.delete() }
+                    }
+                    val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+                    val out = File(cacheDir, "sensor_report_$ts.pdf")
+                    com.example.connectapp.utils.PdfReporter.build(
+                        out, temp1, temp2, a1x, a1y, a1z, a2x, a2y, a2z
+                    )
                 }
-                val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
-                val out = File(cacheDir, "sensor_report_$ts.pdf")
-                com.example.connectapp.utils.PdfReporter.build(
-                    out, temp1, temp2, a1x, a1y, a1z, a2x, a2y, a2z
-                )
             }
             if (file == null) {
                 Toast.makeText(this@GraphActivity, "PDF export failed", Toast.LENGTH_SHORT).show()
@@ -131,27 +162,63 @@ class GraphActivity : ComponentActivity() {
         }
     }
 
+    fun shareScreenshot() {
+        lifecycleScope.launch {
+            withLoading("Создание скриншота...") {
+                val view = window.decorView.rootView
+                val bmp = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+                android.graphics.Canvas(bmp).also { view.draw(it) }
+                val file = withContext(Dispatchers.IO) {
+                    runCatching {
+                        cacheDir.listFiles { f -> f.name == "chart_screenshot.png" }?.forEach { it.delete() }
+                    }
+                    val f = java.io.File(cacheDir, "chart_screenshot.png")
+                    f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 95, it) }
+                    f
+                }
+                val uri = androidx.core.content.FileProvider.getUriForFile(this@GraphActivity, "$packageName.fileprovider", file)
+                startActivity(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "image/png"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        },
+                        getString(R.string.graph_export_intent_title)
+                    )
+                )
+            }
+        }
+    }
+
     private fun exportCsv() {
-        val csv = buildCsv()
-        if (csv == null) {
-            Toast.makeText(this, getString(R.string.graph_no_export_data), Toast.LENGTH_SHORT).show()
-            return
+        lifecycleScope.launch {
+            withLoading("Экспорт CSV...") {
+                val csv = withContext(Dispatchers.IO) { buildCsv() }
+                if (csv == null) {
+                    Toast.makeText(this@GraphActivity, getString(R.string.graph_no_export_data), Toast.LENGTH_SHORT).show()
+                    return@withLoading
+                }
+                val file = withContext(Dispatchers.IO) {
+                    runCatching {
+                        cacheDir.listFiles { f -> f.name.startsWith("sensor_data_") && f.name.endsWith(".csv") }
+                            ?.forEach { it.delete() }
+                    }
+                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
+                    val f = File(cacheDir, "sensor_data_$timestamp.csv")
+                    f.writeText(csv)
+                    f
+                }
+                val uri = FileProvider.getUriForFile(this@GraphActivity, "$packageName.fileprovider", file)
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/csv"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, getString(R.string.graph_export_subject))
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(intent, getString(R.string.graph_export_intent_title)))
+            }
         }
-        runCatching {
-            cacheDir.listFiles { f -> f.name.startsWith("sensor_data_") && f.name.endsWith(".csv") }
-                ?.forEach { it.delete() }
-        }
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
-        val file = File(cacheDir, "sensor_data_$timestamp.csv")
-        file.writeText(csv)
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/csv"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.graph_export_subject))
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        startActivity(Intent.createChooser(intent, getString(R.string.graph_export_intent_title)))
     }
 
     private fun buildCsv(): String? {
@@ -184,9 +251,28 @@ class GraphActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(
+    ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+)
 @Composable
-private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: () -> Unit) {
+private fun GraphScreen(
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+    onExportPdf: () -> Unit,
+    onScreenshot: () -> Unit,
+    loadingStatus: kotlinx.coroutines.flow.StateFlow<String?>,
+) {
+    // Частота опроса из настроек — используется в FFT/STFT для подписей оси
+    // частот и расчёта периодов. Меняется в SettingsDialog → DataStore.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val settingsRepo = remember { com.example.connectapp.data.settings.SettingsRepository(context) }
+    val appSettings by settingsRepo.flow.collectAsStateWithLifecycle(
+        initialValue = com.example.connectapp.data.settings.AppSettings.DEFAULT
+    )
+    val sampleRateHz = appSettings.sampleRateHz
+
     // Live-данные с шины. Дальше прогоняем через snapshotWhen(paused) и
     // applyWindow(window) — фильтры применяются и к графикам, и к MathSection.
     val temp1Live by SensorDataBus.temp1.collectAsStateWithLifecycle()
@@ -210,9 +296,22 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
     var showSigma by remember { mutableStateOf(false) }
     var showThreshold by remember { mutableStateOf(false) }
     var phaseLock by remember { mutableStateOf(false) }
+    // Видимость осей акселерометров — пользователь сам решает что показывать.
+    // По умолчанию все включены. rememberSaveable: переживают rotation/конфиг.
+    // Advanced — скрывает FFT/STFT/Lissajous/Phosphor/Kalman/Velocity до галочки.
+    // Базовый набор (RMS/Tilt/HeatFlux) остаётся всегда.
+    var advancedMath by rememberSaveable { mutableStateOf(false) }
+    var showAx1 by rememberSaveable { mutableStateOf(true) }
+    var showAy1 by rememberSaveable { mutableStateOf(true) }
+    var showAz1 by rememberSaveable { mutableStateOf(true) }
+    var showAx2 by rememberSaveable { mutableStateOf(true) }
+    var showAy2 by rememberSaveable { mutableStateOf(true) }
+    var showAz2 by rememberSaveable { mutableStateOf(true) }
     // Shared crosshair-state — тап на любом из 3 line charts двигает линию
     // во ВСЕХ. Объект (не StateFlow) держит Long? state без боксинга.
     val crosshair = remember { CrosshairBus() }
+    val zoom = remember { ZoomBus() }
+    var showAlertDialog by remember { mutableStateOf(false) }
 
     // 1) Freeze: при paused = true возвращаем снимок, снятый в момент перехода.
     val temp1Snap = snapshotWhen(paused, temp1Live)
@@ -276,6 +375,39 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                             )
                         }
                     }
+                    // Скриншот экрана графиков — быстрый шеринг того что видишь.
+                    IconButton(onClick = onScreenshot) {
+                        Icon(Icons.Filled.CameraAlt, contentDescription = "Скриншот")
+                    }
+                    // Алерты — колокол подсвечивается если есть активные пороги.
+                    IconButton(onClick = { showAlertDialog = true }) {
+                        Icon(
+                            Icons.Filled.NotificationsActive,
+                            contentDescription = "Настроить алерты"
+                        )
+                    }
+                    // Журнал аномалий — открывает Activity со списком срабатываний.
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    IconButton(onClick = {
+                        ctx.startActivity(
+                            android.content.Intent(ctx, com.example.connectapp.ui.anomaly.AnomalyLogActivity::class.java)
+                        )
+                    }) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ListAlt,
+                            contentDescription = "Журнал аномалий"
+                        )
+                    }
+                    // Сброс pinch-zoom — появляется только когда активен зум.
+                    if (zoom.isZoomed) {
+                        IconButton(onClick = { zoom.reset() }) {
+                            Icon(
+                                Icons.Filled.ZoomOutMap,
+                                contentDescription = "Сбросить зум",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     // Pause — заморозить графики и stats на текущем кадре, чтобы
                     // успеть прочитать значения, пока поток идёт. Снежинка → нажата.
                     IconButton(onClick = { paused = !paused }) {
@@ -308,6 +440,32 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+        ) {
+            // Индикатор долгих операций (PDF/CSV/Screenshot) — анимированно
+            // появляется/исчезает. Показывает текст текущего шага под прогрессом.
+            val currentLoad by loadingStatus.collectAsStateWithLifecycle()
+            androidx.compose.animation.AnimatedVisibility(
+                visible = currentLoad != null,
+                enter = androidx.compose.animation.expandVertically() +
+                    androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.shrinkVertically() +
+                    androidx.compose.animation.fadeOut(),
+            ) {
+                Column {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        currentLoad.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -391,9 +549,16 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                 }
             }
 
-            // Overlays-row: envelope / ±1σ / threshold-alert. Применяются
-            // ко ВСЕМ NeonChart'ам единообразно — научный режим.
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Overlays-row: envelope / ±1σ / threshold-alert / phase-lock / advanced.
+            // Применяются ко ВСЕМ NeonChart'ам единообразно — научный режим.
+            // FlowRow вместо обычного Row: 5 чипов на узком экране не помещаются
+            // в одну строку и последний (advanced) уезжал за правый край —
+            // пользователь его просто не видел. FlowRow переносит на новую.
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text(
                     "overlays:",
                     style = MaterialTheme.typography.bodySmall,
@@ -428,6 +593,12 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                     label = { Text("phase-lock") },
                     colors = chipColors
                 )
+                FilterChip(
+                    selected = advancedMath,
+                    onClick = { advancedMath = !advancedMath },
+                    label = { Text("advanced") },
+                    colors = chipColors
+                )
             }
 
             // Neon-палитра — насыщенные неоновые цвета поверх тёмного фона
@@ -456,6 +627,15 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                 phaseLock = phaseLock,
             )
 
+            // Текущие значения всех каналов крупными цифрами — сразу видно состояние
+            // без необходимости искать crosshair или смотреть на графики. Красным,
+            // если значение превышает настроенный в AlertEngine порог.
+            CurrentValuesCard(
+                temp1 = temp1, temp2 = temp2,
+                a1x = a1x, a1y = a1y, a1z = a1z,
+                a2x = a2x, a2y = a2y, a2z = a2z,
+            )
+
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
             TempStatsRow("T1", temp1)
             TempStatsRow("T2", temp2)
@@ -466,36 +646,52 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                         NeonSeries(temp2, tempColors[1], "T2"),
                     ),
                     config = tempConfig,
+                    zoom = zoom,
                     crosshair = crosshair,
                     modifier = Modifier.fillMaxSize()
                 )
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 1", style = MaterialTheme.typography.titleLarge)
+            AxisFilterRow(
+                showX = showAx1, onShowXChange = { showAx1 = it },
+                showY = showAy1, onShowYChange = { showAy1 = it },
+                showZ = showAz1, onShowZChange = { showAz1 = it },
+            )
             ChartCard(height = 220) {
                 // Multi-axis: az → правая ось (диапазон ~900-1100 от гравитации),
                 // ax/ay → левая (±50). Без этого ax/ay сплющены в линию.
+                // Фильтруем по чекбоксам — если ось выключена, серия не добавляется.
+                val a1Series = buildList {
+                    if (showAx1) add(NeonSeries(a1x, accelColors[0], "ax", NeonAxis.LEFT))
+                    if (showAy1) add(NeonSeries(a1y, accelColors[1], "ay", NeonAxis.LEFT))
+                    if (showAz1) add(NeonSeries(a1z, accelColors[2], "az", NeonAxis.RIGHT))
+                }
                 NeonChart(
-                    seriesList = listOf(
-                        NeonSeries(a1x, accelColors[0], "ax", NeonAxis.LEFT),
-                        NeonSeries(a1y, accelColors[1], "ay", NeonAxis.LEFT),
-                        NeonSeries(a1z, accelColors[2], "az", NeonAxis.RIGHT),
-                    ),
+                    seriesList = a1Series,
                     config = accelConfig,
+                    zoom = zoom,
                     crosshair = crosshair,
                     modifier = Modifier.fillMaxSize()
                 )
             }
 
             Text("${stringResource(R.string.label_accelerometer)} 2", style = MaterialTheme.typography.titleLarge)
+            AxisFilterRow(
+                showX = showAx2, onShowXChange = { showAx2 = it },
+                showY = showAy2, onShowYChange = { showAy2 = it },
+                showZ = showAz2, onShowZChange = { showAz2 = it },
+            )
             ChartCard(height = 220) {
+                val a2Series = buildList {
+                    if (showAx2) add(NeonSeries(a2x, accelColors[0], "ax", NeonAxis.LEFT))
+                    if (showAy2) add(NeonSeries(a2y, accelColors[1], "ay", NeonAxis.LEFT))
+                    if (showAz2) add(NeonSeries(a2z, accelColors[2], "az", NeonAxis.RIGHT))
+                }
                 NeonChart(
-                    seriesList = listOf(
-                        NeonSeries(a2x, accelColors[0], "ax", NeonAxis.LEFT),
-                        NeonSeries(a2y, accelColors[1], "ay", NeonAxis.LEFT),
-                        NeonSeries(a2z, accelColors[2], "az", NeonAxis.RIGHT),
-                    ),
+                    seriesList = a2Series,
                     config = accelConfig,
+                    zoom = zoom,
                     crosshair = crosshair,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -525,9 +721,50 @@ private fun GraphScreen(onBack: () -> Unit, onExport: () -> Unit, onExportPdf: (
                 t1 = temp1, t2 = temp2,
                 a1x = a1x, a1y = a1y, a1z = a1z,
                 a2x = a2x, a2y = a2y,
-                generation = generation
+                generation = generation,
+                advanced = advancedMath,
+                sampleRateHz = sampleRateHz,
             )
         }
+        } // outer Column (loading indicator wrapper)
+    }
+
+    if (showAlertDialog) {
+        AlertSettingsDialog(onDismiss = { showAlertDialog = false })
+    }
+}
+
+/**
+ * Чипы выбора видимых осей акселерометра (ax/ay/az).
+ * Тап по чипу — toggle отдельной оси без затрагивания других.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AxisFilterRow(
+    showX: Boolean, onShowXChange: (Boolean) -> Unit,
+    showY: Boolean, onShowYChange: (Boolean) -> Unit,
+    showZ: Boolean, onShowZChange: (Boolean) -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
+        FilterChip(
+            selected = showX,
+            onClick = { onShowXChange(!showX) },
+            label = { Text("ax", style = MaterialTheme.typography.labelMedium) }
+        )
+        FilterChip(
+            selected = showY,
+            onClick = { onShowYChange(!showY) },
+            label = { Text("ay", style = MaterialTheme.typography.labelMedium) }
+        )
+        FilterChip(
+            selected = showZ,
+            onClick = { onShowZChange(!showZ) },
+            label = { Text("az", style = MaterialTheme.typography.labelMedium) }
+        )
     }
 }
 

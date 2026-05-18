@@ -226,6 +226,7 @@ private fun BluetoothScreen(
             onTheme = viewModel::setDarkTheme,
             onLineEnding = viewModel::setLineEnding,
             onHexSend = viewModel::setHexSendMode,
+            onSampleRate = viewModel::setSampleRateHz,
             onEditQuickCommands = { quickCmdsOpen = true }
         )
     }
@@ -547,6 +548,7 @@ private fun SettingsDialog(
     onTheme: (Boolean?) -> Unit,
     onLineEnding: (LineEnding) -> Unit,
     onHexSend: (Boolean) -> Unit,
+    onSampleRate: (Float) -> Unit,
     onEditQuickCommands: () -> Unit
 ) {
     AlertDialog(
@@ -582,6 +584,11 @@ private fun SettingsDialog(
                 ThemeChips(current = settings.darkTheme, onChange = onTheme)
                 Text(stringResource(R.string.settings_terminator), style = MaterialTheme.typography.labelLarge)
                 LineEndingChips(current = settings.lineEnding, onChange = onLineEnding)
+                Text(
+                    stringResource(R.string.settings_sample_rate),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                SampleRateChips(current = settings.sampleRateHz, onChange = onSampleRate)
                 // Кастомные команды — отдельный диалог-редактор, открываемый
                 // отсюда. Здесь только summary + кнопка.
                 Row(
@@ -782,6 +789,24 @@ private fun LineEndingChips(current: LineEnding, onChange: (LineEnding) -> Unit)
         ThemeChip(stringResource(R.string.term_cr), selected = current == LineEnding.CR) { onChange(LineEnding.CR) }
         ThemeChip(stringResource(R.string.term_crlf), selected = current == LineEnding.CRLF) { onChange(LineEnding.CRLF) }
         ThemeChip(stringResource(R.string.term_none), selected = current == LineEnding.NONE) { onChange(LineEnding.NONE) }
+    }
+}
+
+/**
+ * Чипы выбора частоты опроса. 5 пресетов: 1/5/10/20/50 Гц.
+ * Совпадение по `current ≈ value` через малую epsilon — Float сравнение.
+ */
+@Composable
+private fun SampleRateChips(current: Float, onChange: (Float) -> Unit) {
+    val rates = listOf(1f, 5f, 10f, 20f, 50f)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        rates.forEach { rate ->
+            ThemeChip(
+                label = "${rate.toInt()} Гц",
+                selected = kotlin.math.abs(current - rate) < 0.01f,
+                onClick = { onChange(rate) }
+            )
+        }
     }
 }
 
