@@ -23,7 +23,14 @@ data class AppSettings(
     /** Если включено — поле «Сообщение» парсит ввод как HEX-байты ("AA 55 01"). */
     val hexSendMode: Boolean = false,
     /** Набор кастомных чипов-команд над полем ввода. Редактируется в Настройках. */
-    val quickCommands: List<QuickCommand> = QuickCommand.DEFAULT
+    val quickCommands: List<QuickCommand> = QuickCommand.DEFAULT,
+    /**
+     * Частота опроса платы в Гц. Используется для FFT/STFT/Cross-correlation:
+     * частоты на оси спектра, лаги в секундах, period detection. Если поменять —
+     * подписи на спектре будут соответствовать реальной частоте дискретизации.
+     * Стандартные значения: 1/5/10/20/50 Гц. По умолчанию 10 Гц (PIC24 default).
+     */
+    val sampleRateHz: Float = 10f,
 ) {
     companion object {
         val DEFAULT = AppSettings()

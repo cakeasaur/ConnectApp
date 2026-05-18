@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.ConnectionState
+import com.example.connectapp.data.models.GlobalConnectionStatus
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.repository.BluetoothRepository
@@ -98,6 +99,18 @@ class BluetoothViewModel(
         // Auto-monitor шлёт '1' только при ПЕРЕХОДЕ not-Connected → Connected
         // (не на каждое появление Connected), иначе при auto-reconnect цикле
         // PIC firmware получает '1' дважды и интерпретирует второе как stop.
+        // Глобальный статус — для persistent-banner'а на MainActivity.
+        viewModelScope.launch {
+            state.collect { s ->
+                GlobalConnectionStatus.set(
+                    transport = FG_OWNER,
+                    snapshot = GlobalConnectionStatus.Snapshot(
+                        state = s,
+                        label = lastAddress ?: "—"
+                    )
+                )
+            }
+        }
         viewModelScope.launch {
             var wasConnected = false
             state.collect { s ->
@@ -110,7 +123,7 @@ class BluetoothViewModel(
                         com.example.connectapp.R.string.fg_title_bt,
                         lastAddress ?: "—"
                     )
-                    ConnectionForegroundService.start(application, title)
+                    ConnectionForegroundService.start(application, FG_OWNER, title)
                     if (_settings.value.autoMonitor) {
                         // Задержка чтобы плата успела выпустить boot-меню и быть в режиме приёма.
                         delay(300)
@@ -120,7 +133,7 @@ class BluetoothViewModel(
                     // Остановка fg-service при любом не-Connected состоянии,
                     // включая Reconnecting — иначе пользователь видит "Соединение
                     // активно" пока на самом деле уже разорвано.
-                    ConnectionForegroundService.stop(application)
+                    ConnectionForegroundService.stop(application, FG_OWNER)
                 }
             }
         }
@@ -214,7 +227,8 @@ class BluetoothViewModel(
     private fun sendHex(input: String) {
         val bytes = HexCodec.parse(input)
         if (bytes == null) {
-            logBuffer.appendLine("← [ERROR] invalid HEX: $input", viewModelScope)
+            val reason = HexCodec.describeError(input) ?: "invalid HEX"
+            logBuffer.appendLine("← [ERROR] HEX $reason: $input", viewModelScope)
             scheduleSave()
             return
         }
@@ -240,7 +254,7 @@ class BluetoothViewModel(
 
     fun clearLog() {
         saveLogJob?.cancel()
-        logBuffer.clear(viewModelScope)
+        logBuffer.clear()
         handle[KEY_LOG] = ""
         // lineBuffer читается из parseChunk на Dispatchers.Default — синхрон
         // обязателен, иначе ConcurrentModificationException.
@@ -264,6 +278,8 @@ class BluetoothViewModel(
         viewModelScope.launch { settingsRepo.setLineEnding(value) }
     fun setHexSendMode(value: Boolean) =
         viewModelScope.launch { settingsRepo.setHexSendMode(value) }
+    fun setSampleRateHz(value: Float) =
+        viewModelScope.launch { settingsRepo.setSampleRateHz(value) }
     fun setQuickCommands(list: List<QuickCommand>) =
         viewModelScope.launch { settingsRepo.setQuickCommands(list) }
 
@@ -277,8 +293,9 @@ class BluetoothViewModel(
         if (cmd.hex) {
             val bytes = HexCodec.parse(cmd.payload)
             if (bytes == null) {
+                val reason = HexCodec.describeError(cmd.payload) ?: "invalid HEX"
                 logBuffer.appendLine(
-                    "← [ERROR] invalid HEX in quick '${cmd.label}': ${cmd.payload}",
+                    "← [ERROR] HEX in quick '${cmd.label}' ($reason): ${cmd.payload}",
                     viewModelScope
                 )
                 scheduleSave()
@@ -424,7 +441,9 @@ class BluetoothViewModel(
         repo.release()
         // VM умирает — сервис тоже стопаем, иначе остаётся "висячий"
         // notification без активного соединения.
-        ConnectionForegroundService.stop(getApplication())
+        ConnectionForegroundService.stop(getApplication(), FG_OWNER)
+        // Снимаем себя из global-status — иначе банер на главной залипает.
+        GlobalConnectionStatus.set(FG_OWNER, null)
     }
 
     companion object {
@@ -432,5 +451,6 @@ class BluetoothViewModel(
         const val KEY_LOG = "bt.log"
         /** Сколько слушать ответ платы после отправки '2'. */
         private const val CALIBRATION_TIMEOUT_MS = 8000L
+        private const val FG_OWNER = "bt"
     }
 }

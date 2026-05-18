@@ -4,7 +4,9 @@ import android.app.Application
 import android.hardware.usb.UsbDevice
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.ConnectionState
+import com.example.connectapp.data.models.GlobalConnectionStatus
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.repository.UsbSerialRepository
@@ -61,6 +63,24 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
                 withContext(Dispatchers.Default) { parseChunk(chunk) }
             }
         }
+        // Команды из MQTT/GraphActivity — только если USB активен.
+        viewModelScope.launch {
+            CommandBus.commands.collect { cmd ->
+                if (state.value is ConnectionState.Connected) sendSilent(cmd)
+            }
+        }
+        // Глобальный статус для banner'а на главном экране.
+        viewModelScope.launch {
+            state.collect { s ->
+                GlobalConnectionStatus.set(
+                    transport = FG_OWNER,
+                    snapshot = GlobalConnectionStatus.Snapshot(
+                        state = s,
+                        label = "USB"
+                    )
+                )
+            }
+        }
         // Foreground service — то же что у BT/Wi-Fi, чтобы Android не убил
         // процесс при сворачивании во время записи длинной сессии.
         viewModelScope.launch {
@@ -72,13 +92,14 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
                 if (transition) {
                     ConnectionForegroundService.start(
                         application,
+                        FG_OWNER,
                         application.getString(
                             com.example.connectapp.R.string.fg_title_usb,
                             "USB"
                         )
                     )
                 } else if (!nowConnected) {
-                    ConnectionForegroundService.stop(application)
+                    ConnectionForegroundService.stop(application, FG_OWNER)
                 }
             }
         }
@@ -106,8 +127,18 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /** Тихая отправка для MQTT/CommandBus-команд. */
+    private fun sendSilent(payload: String) {
+        val terminated = payload + _settings.value.lineEnding.suffix
+        viewModelScope.launch {
+            repo.send(terminated).onFailure { e ->
+                logBuffer.appendLine("← [ERROR] mqtt: ${e.message ?: "send failed"}", viewModelScope)
+            }
+        }
+    }
+
     fun clearLog() {
-        logBuffer.clear(viewModelScope)
+        logBuffer.clear()
         synchronized(lineBuffer) { lineBuffer.clear() }
         _sensorData.value = SensorData()
         SensorDataBus.clear()
@@ -157,6 +188,11 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
     override fun onCleared() {
         super.onCleared()
         repo.release()
-        ConnectionForegroundService.stop(getApplication())
+        ConnectionForegroundService.stop(getApplication(), FG_OWNER)
+        GlobalConnectionStatus.set(FG_OWNER, null)
+    }
+
+    companion object {
+        private const val FG_OWNER = "usb"
     }
 }

@@ -13,6 +13,7 @@
     <!-- POST_NOTIFICATIONS — Android 13+ для показа foreground-уведомления.
          Без неё сервис всё равно работает, но иконки в шторке не видно. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Bluetooth: legacy (for API < 31, ignored on 31+) -->
     <uses-permission
@@ -51,7 +52,8 @@
         android:required="false" />
 
     <application
-        android:allowBackup="true"
+        android:name=".ConnectApplication"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:label="@string/app_name"
@@ -96,6 +98,16 @@
             android:name=".ui.usb.UsbSerialActivity"
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
+
+        <activity
+            android:name=".ui.mqtt.MqttSettingsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+
+        <activity
+            android:name=".ui.anomaly.AnomalyLogActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.graph.GraphActivity" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

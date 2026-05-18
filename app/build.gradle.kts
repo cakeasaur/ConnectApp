@@ -53,6 +53,12 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // HiveMQ MQTT тащит Netty, у которого в каждом подмодуле
+            // отдельный INDEX.LIST/DEPENDENCIES/io.netty.versions.properties —
+            // merge ругается на дубликаты.
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/io.netty.versions.properties"
+            excludes += "/META-INF/DEPENDENCIES"
         }
     }
 }
@@ -91,6 +97,11 @@ dependencies {
     // DataStore Preferences (настройки приложения)
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+    // EncryptedSharedPreferences — пароль MQTT-брокера лежит зашифрованным
+    // мастер-ключом из Android Keystore. Plain-text в DataStore был бы виден
+    // при бэкапе / ADB-доступе.
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
     // Vico удалён — все line-charts мигрировали на кастомный NeonChart
     // (ui/graph/NeonChart.kt), который рисует через Canvas+Path с
     // multi-axis, envelope, sigma, glow и phase-lock. Math-section
@@ -100,6 +111,16 @@ dependencies {
     // Альтернатива HC-05/Wi-Fi: USB-OTG-кабель прямо к плате через UART-bridge.
     // Стабильнее BT, быстрее (до 921600 baud), работает без сопряжения.
     implementation("com.github.mik3y:usb-serial-for-android:3.7.3")
+
+    // HiveMQ MQTT 5 client — MQTT-мост для интеграции с Home Assistant,
+    // Grafana, Node-RED. Java-библиотека с async API (CompletableFuture),
+    // оборачиваем в корутины. Поддерживает MQTT 3.1.1 fallback и
+    // встроенный auto-reconnect.
+    implementation("com.hivemq:hivemq-mqtt-client:1.3.5")
+    // Netty уже тянется HiveMQ как runtime-зависимость, но `runtime` scope
+    // не доступен на compile classpath — нам нужен InsecureTrustManagerFactory
+    // для self-signed CA, поэтому объявляем netty-handler явно (та же версия).
+    implementation("io.netty:netty-handler:4.1.118.Final")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

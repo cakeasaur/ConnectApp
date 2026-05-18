@@ -3,17 +3,24 @@ package com.example.connectapp.ui.graph
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -22,15 +29,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.math.Fft
+import com.example.connectapp.utils.PerfTrace
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -110,9 +119,14 @@ fun NeonChart(
     seriesList: List<NeonSeries>,
     modifier: Modifier = Modifier,
     config: NeonChartConfig = NeonChartConfig(),
+    zoom: ZoomBus? = null,
     crosshair: CrosshairBus? = null,
 ) {
     val nonEmpty = seriesList.filter { it.data.isNotEmpty() }
+    // Density-aware padding: захватываем здесь чтобы использовать в pointerInput
+    // (там нет DrawScope, поэтому density нужен из LocalDensity).
+    val localDensity = androidx.compose.ui.platform.LocalDensity.current.density
+    val padAxisPx = (localDensity * 25f).coerceAtLeast(PAD_LEFT_MIN)
     if (nonEmpty.isEmpty()) {
         Box(
             modifier = modifier
@@ -132,14 +146,34 @@ fun NeonChart(
     val rawLastT = nonEmpty.maxOf { it.data.last().t }
     val rawFirstT = nonEmpty.minOf { it.data.first().t }
 
-    // Phase-lock — переопределяем окно отображения до 2 периодов доминанты.
-    // Если периодичность не обнаружена → fallback raw. Считаем без
-    // remember — детект всё равно дёшев (FFT-64 ≈ 0.3 мс), а ключ raw lastT
-    // меняется на КАЖДОМ новом отсчёте, делая кэш бесполезным.
-    val (firstT, lastT) = if (config.phaseLock) {
-        detectPhaseLockWindow(nonEmpty[0].data, config.sampleRateHz, rawFirstT, rawLastT)
-            ?: (rawFirstT to rawLastT)
-    } else rawFirstT to rawLastT
+    // Accessibility: TalkBack ничего не видит в Canvas-чарте. Собираем
+    // текстовую сводку (последнее значение каждой серии + min/max) и
+    // вешаем её contentDescription'ом на корневой Box.
+    //
+    // Ключ remember = (rawLastT, nonEmpty.size). rawLastT меняется на каждом
+    // новом отсчёте — этого достаточно, чтобы детектить append/replace.
+    // Раньше использовали sumOf { it.data.size } — O(N серий) на каждый
+    // recompose, при равных rawLastT всё равно ничего не пересчитывали бы;
+    // size серий ≤ 3 — этот ключ почти константа, но даёт стабильный
+    // re-eval при добавлении/удалении серии (toggle ax/ay/az).
+    val a11y = remember(rawLastT, nonEmpty.size) {
+        nonEmpty.joinToString("; ") { s ->
+            val values = s.data.map { it.value }
+            val last = values.last()
+            val mn = values.min()
+            val mx = values.max()
+            "${s.label} ${"%.2f".format(last)}, min ${"%.2f".format(mn)}, max ${"%.2f".format(mx)}"
+        }
+    }
+
+    // Zoom: сначала сужаем диапазон по ZoomBus (pinch/pan), потом
+    // опционально ещё раз по phaseLock. Когда zoom активен — phaseLock
+    // пропускаем: пользователь уже выбрал нужное окно руками.
+    val baseRange = zoom?.applyTo(rawFirstT, rawLastT) ?: (rawFirstT to rawLastT)
+    val (firstT, lastT) = if (config.phaseLock && zoom?.isZoomed != true) {
+        detectPhaseLockWindow(nonEmpty[0].data, config.sampleRateHz, baseRange.first, baseRange.second)
+            ?: baseRange
+    } else baseRange
 
     // bounds считаются по ВСЕМ данным серий (не по phase-lock окну) — иначе
     // Y-масштаб скачет на каждом новом отсчёте. БЕЗ remember: ring-buffer
@@ -147,34 +181,85 @@ fun NeonChart(
     // на устаревших значениях. Считаем напрямую — O(N) проход дёшев.
     val bounds = computeBounds(nonEmpty, config.thresholds)
 
+    // Ширина чарта в пикселях. NaN = ещё не обмерян (до первого onSizeChanged).
+    // NaN-guard в transformableState исключает неверный скачок при первом свайпе
+    // когда реальная ширина ещё неизвестна.
+    val chartWidthRef = remember { floatArrayOf(Float.NaN) }
+    val transformableState = rememberTransformableState { scaleChange, panChange, _ ->
+        if (zoom != null) {
+            zoom.scaleX = (zoom.scaleX * scaleChange).coerceIn(1f, ZoomBus.MAX_SCALE)
+            if (zoom.isZoomed) {
+                val w = chartWidthRef[0]
+                if (!w.isNaN() && w > 0f) {
+                    zoom.offsetFraction -= panChange.x / w / zoom.scaleX
+                }
+            }
+        }
+    }
+    // rememberUpdatedState: pointerInput-лямбда не рестартует при новых данных
+    // (ключи не меняются), поэтому firstT/lastT захватывались бы как stale.
+    // State-объект захватывается по ссылке → лямбда читает актуальное значение.
+    val currentFirstT by rememberUpdatedState(firstT)
+    val currentLastT by rememberUpdatedState(lastT)
+
+    // Reusable Path/Band — выделяется один раз на жизнь Composable.
+    // Каждый кадр reuse: .reset() в начале drawSeriesLine, аккумуляция, draw.
+    // Раньше Path() new каждый draw × 3 series × 30 fps = 90 native-alloc/сек.
+    val linePath = remember { Path() }
+    val bandPath = remember { Path() }
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(NeonTheme.bg)
-            // Tap-обработчик для crosshair. crosshair == null → отключаем
-            // pointerInput полностью (чарт может рендериться без курсора).
+            .semantics(mergeDescendants = true) { contentDescription = a11y }
+            .onSizeChanged { chartWidthRef[0] = it.width.toFloat() }
+            // transformable: enabled только если zoom передан — иначе модификатор
+            // не конкурирует с вертикальным скроллом родителя.
+            .transformable(transformableState, lockRotationOnZoomPan = true, enabled = zoom != null)
+            // Tap → crosshair, DoubleTap → сброс зума.
+            // Объединяем оба случая в один pointerInput чтобы не конфликтовали.
             .let { m ->
-                if (crosshair == null) m else m.pointerInput(crosshair) {
-                    detectTapGestures { offset ->
-                        if (lastT <= firstT) return@detectTapGestures
-                        val padR = if (nonEmpty.any { it.axis == NeonAxis.RIGHT }) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
-                        val plotL = PAD_LEFT
-                        val plotR = size.width - padR
-                        if (offset.x < plotL || offset.x > plotR) return@detectTapGestures
-                        val frac = ((offset.x - plotL) / (plotR - plotL)).coerceIn(0f, 1f)
-                        crosshair.tap(firstT + (frac * (lastT - firstT)).toLong())
-                    }
+                if (crosshair == null && zoom == null) m
+                else m.pointerInput(crosshair, zoom) {
+                    detectTapGestures(
+                        onTap = { offset ->
+                            if (crosshair == null || currentLastT <= currentFirstT) return@detectTapGestures
+                            val padR = if (nonEmpty.any { it.axis == NeonAxis.RIGHT }) padAxisPx else PAD_RIGHT_BASE
+                            val plotL = padAxisPx
+                            val plotR = size.width - padR
+                            if (offset.x < plotL || offset.x > plotR) return@detectTapGestures
+                            val frac = ((offset.x - plotL) / (plotR - plotL)).coerceIn(0f, 1f)
+                            crosshair.tap(currentFirstT + (frac * (currentLastT - currentFirstT)).toLong())
+                        }
+                    )
                 }
             }
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            drawNeonChart(nonEmpty, bounds, config, firstT, lastT)
+            PerfTrace.measure("chart.draw") {
+                drawNeonChart(nonEmpty, bounds, config, firstT, lastT, linePath, bandPath)
+            }
         }
         // Легенда сверху-слева.
         LegendRow(
             nonEmpty.map { it.label to it.color },
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
         )
+        // Индикатор зума снизу-справа: "×2.5". Двойной тап сбрасывает.
+        if (zoom != null && zoom.isZoomed) {
+            Text(
+                "×${"%.1f".format(Locale.ROOT, zoom.scaleX)}",
+                color = NeonTheme.accent,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .background(NeonTheme.bg.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
         // Crosshair overlay — общий с sync-bus.
         if (crosshair != null) {
             CrosshairOverlay(crosshair, firstT, lastT, nonEmpty)
@@ -300,12 +385,16 @@ private fun computeBounds(
 // ============================================================
 
 /**
- * Отступы под подписи осей. PAD_LEFT=56f даёт ~5 знаков (например "-1100"
- * с минусом) без обрезания; меньше — лейблы накладываются на сетку.
+ * Отступы под подписи осей. Значения в ПИКСЕЛЯХ Canvas (не в dp).
+ * PAD_LEFT/PAD_RIGHT_WITH_AXIS вычисляются динамически в DrawScope
+ * на основе density, поэтому константы здесь — fallback-минимумы.
+ *
+ * Формула: density * 10sp * 4.5 chars * ~0.55 char-width-ratio ≈ density * 25f.
+ * На плотных экранах (density≥2.5) тикет "27.0" иначе вылезает за левый край.
  */
-private const val PAD_LEFT = 56f
+private const val PAD_LEFT_MIN = 72f   // fallback если density < 2
 private const val PAD_RIGHT_BASE = 12f
-private const val PAD_RIGHT_WITH_AXIS = 56f
+private const val PAD_RIGHT_AXIS_MIN = 72f
 private const val PAD_TOP = 24f
 private const val PAD_BOTTOM = 24f
 
@@ -315,9 +404,14 @@ private fun DrawScope.drawNeonChart(
     config: NeonChartConfig,
     firstT: Long,
     lastT: Long,
+    linePath: Path,
+    bandPath: Path,
 ) {
-    val padR = if (bounds.right != null) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
-    val plotL = PAD_LEFT
+    // Density-aware: 10sp × 4.5 chars × ~0.55 char-width ≈ density*25f.
+    // Без этого на экранах density≥2.5 тикеты вида "27.0" обрезались слева.
+    val padAxis = (density * 25f).coerceAtLeast(PAD_LEFT_MIN)
+    val padR = if (bounds.right != null) padAxis else PAD_RIGHT_BASE
+    val plotL = padAxis
     val plotR = size.width - padR
     val plotT = PAD_TOP
     val plotB = size.height - PAD_BOTTOM
@@ -359,15 +453,23 @@ private fun DrawScope.drawNeonChart(
     }
 
     // 4. Per-series drawing (envelope → sigma → line → current point).
+    // Если у серии есть threshold той же оси — линия выше порога красится
+    // в alert-цвет (через canvas clip, без вторичной интерполяции точек).
+    //
+    // linePath/bandPath переиспользуются между сериями: каждая drawSeriesLine
+    // / drawEnvelope делает .reset() и заполняет заново. Это убирает
+    // Path() native-alloc на каждый кадр (раньше 90+ alloc/сек).
     for (s in series) {
         val ab = when (s.axis) {
             NeonAxis.LEFT -> bounds.left
             NeonAxis.RIGHT -> bounds.right ?: bounds.left
         }
-        if (config.showEnvelope) drawEnvelope(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
+        val thr = config.thresholds.firstOrNull { it.axis == s.axis }
+        val alertY = thr?.let { yPx(it.value, ab) }
+        if (config.showEnvelope) drawEnvelope(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints, bandPath)
         if (config.showSigma) drawSigma(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
-        drawSeriesLine(s, ab, firstT, lastT, ::xPx, ::yPx)
-        drawCurrentPoint(s, ab, ::xPx, ::yPx)
+        drawSeriesLine(s, ab, firstT, lastT, ::xPx, ::yPx, alertY, linePath)
+        drawCurrentPoint(s, ab, ::xPx, ::yPx, alertY)
     }
 
     // 5. Threshold lines.
@@ -384,9 +486,10 @@ private fun DrawScope.drawNeonChart(
                 strokeWidth = 1f,
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
             )
-            // alignRight=true: текст растёт ВЛЕВО от plotR-4f. Без этого
-            // "⚠ overheat" уходил за правый край Canvas и был невидим.
-            drawText("⚠ ${thr.label}", plotR - 4f, y - 4f, alignRight = true, color = thr.color)
+            // alignRight: текст растёт влево от plotR-4f.
+            // clipRect в drawText не даёт вылезти за границу Canvas.
+            val textY = (y - 4f).coerceAtLeast(plotT + 10f)
+            drawText("⚠ ${thr.label}", plotR - 4f, textY, alignRight = true, color = thr.color)
         }
     }
 }
@@ -494,15 +597,43 @@ private fun DrawScope.drawSeriesLine(
     firstT: Long, lastT: Long,
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
+    alertY: Float? = null,   // y-координата порога в пикселях; null = подсветки нет
+    path: Path,              // переиспользуемый между сериями/кадрами
 ) {
     if (s.data.size < 2) return
-    val path = buildSmoothPath(s.data, firstT, lastT, xPx, yPx, ab)
+    PerfTrace.measure("path.build") {
+        buildSmoothPath(path, s.data, firstT, lastT, xPx, yPx, ab)
+    }
 
     drawIntoCanvas { canvas ->
-        haloPaint.color = s.color.glow(0.4f)
-        canvas.drawPath(path, haloPaint)
-        corePaint.color = s.color
-        canvas.drawPath(path, corePaint)
+        if (alertY == null) {
+            haloPaint.color = s.color.glow(0.4f)
+            canvas.drawPath(path, haloPaint)
+            corePaint.color = s.color
+            canvas.drawPath(path, corePaint)
+        } else {
+            // Двойная отрисовка с canvas clip:
+            //   1) область НИЖЕ порога (y > alertY) — родной цвет серии
+            //   2) область ВЫШЕ порога (y < alertY) — alert-цвет (красный)
+            // Y растёт ВНИЗ → "выше по значению" = меньшее y на экране.
+            val nc = canvas.nativeCanvas
+            // Нижняя часть
+            nc.save()
+            nc.clipRect(0f, alertY, size.width, size.height)
+            haloPaint.color = s.color.glow(0.4f)
+            canvas.drawPath(path, haloPaint)
+            corePaint.color = s.color
+            canvas.drawPath(path, corePaint)
+            nc.restore()
+            // Верхняя часть (превышение порога)
+            nc.save()
+            nc.clipRect(0f, 0f, size.width, alertY)
+            haloPaint.color = NeonTheme.alert.glow(0.5f)
+            canvas.drawPath(path, haloPaint)
+            corePaint.color = NeonTheme.alert
+            canvas.drawPath(path, corePaint)
+            nc.restore()
+        }
     }
 }
 
@@ -516,23 +647,26 @@ private fun DrawScope.drawSeriesLine(
  * Path clip по firstT..lastT — пропускаем точки вне окна (phase-lock).
  */
 private fun buildSmoothPath(
+    path: Path,
     data: List<TimedPoint>,
     firstT: Long, lastT: Long,
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
     ab: AxisBounds,
-): Path {
-    val path = Path()
+) {
+    // Path передан извне (remember в @Composable) и переиспользуется между
+    // кадрами/сериями. reset() очищает внутренние буферы без realloc.
+    path.reset()
     // Найти диапазон точек попадающих в окно. Точки до firstT не рисуем,
     // но первую "слева от окна" оставляем как seed для непрерывной линии
     // от левого края canvas (иначе линия "обрывается" перед окном).
     val n = data.size
-    if (n == 0) return path
+    if (n == 0) return
     var startIdx = 0
     while (startIdx < n - 1 && data[startIdx + 1].t < firstT) startIdx++
     var endIdx = n - 1
     while (endIdx > 0 && data[endIdx - 1].t > lastT) endIdx--
-    if (startIdx >= endIdx) return path
+    if (startIdx >= endIdx) return
 
     val first = data[startIdx]
     path.moveTo(xPx(first.t), yPx(first.value, ab))
@@ -548,7 +682,6 @@ private fun buildSmoothPath(
     // Финальный сегмент — прямая к последней точке.
     val last = data[endIdx]
     path.lineTo(xPx(last.t), yPx(last.value, ab))
-    return path
 }
 
 private fun DrawScope.drawCurrentPoint(
@@ -556,11 +689,15 @@ private fun DrawScope.drawCurrentPoint(
     ab: AxisBounds,
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
+    alertY: Float? = null,
 ) {
     val last = s.data.lastOrNull() ?: return
     val x = xPx(last.t); val y = yPx(last.value, ab)
-    drawCircle(s.color.copy(alpha = 0.3f), radius = 8f, center = Offset(x, y))
-    drawCircle(s.color, radius = 4f, center = Offset(x, y))
+    // y < alertY = значение выше порога (Y растёт вниз) → красная точка
+    val exceeded = alertY != null && y < alertY
+    val color = if (exceeded) NeonTheme.alert else s.color
+    drawCircle(color.copy(alpha = 0.3f), radius = 8f, center = Offset(x, y))
+    drawCircle(color, radius = 4f, center = Offset(x, y))
 }
 
 // ============================================================
@@ -587,6 +724,7 @@ private fun DrawScope.drawEnvelope(
     plotT: Float,
     plotB: Float,
     window: Int,
+    band: Path,    // переиспользуемый Path — reset() в начале
 ) {
     val data = s.data
     val n = data.size
@@ -619,7 +757,7 @@ private fun DrawScope.drawEnvelope(
         maxs[k] = mx
     }
 
-    val band = Path()
+    band.reset()
     // Top edge — forward.
     band.moveTo(xPx(data[startIdx].t), yPx(maxs[0], ab).coerceIn(plotT, plotB))
     for (k in 1 until len) {
@@ -670,7 +808,13 @@ private fun DrawScope.drawSigma(
     while (endIdx > 0 && data[endIdx - 1].t > lastT) endIdx--
     if (startIdx >= endIdx) return
 
-    val pts = ArrayList<Offset>((endIdx - startIdx + 1) * 2)
+    // FloatArray для nativeCanvas.drawLines: формат [x0,y0, x1,y1, x2,y2, x3,y3, ...]
+    // — каждая пара coords = одна точка, каждая пара точек = одна линия.
+    // Это уровень drawPoints(PointMode.Lines), но БЕЗ Offset-аллокаций
+    // (раньше len × 2 Offset() objects + ArrayList grow на каждый кадр).
+    val maxLen = (endIdx - startIdx + 1) * 4   // x,y × 2 endpoints на каждый i
+    val coords = FloatArray(maxLen)
+    var coordIdx = 0
     for (i in startIdx..endIdx) {
         val lo = max(startIdx, i - window / 2)
         val hi = min(endIdx, i + window / 2)
@@ -693,20 +837,43 @@ private fun DrawScope.drawSigma(
         val x = xPx(data[i].t)
         val yMin = yPx((mean + sigma).toFloat(), ab).coerceIn(plotT, plotB)
         val yMax = yPx((mean - sigma).toFloat(), ab).coerceIn(plotT, plotB)
-        pts.add(Offset(x, yMin)); pts.add(Offset(x, yMax))
+        coords[coordIdx++] = x; coords[coordIdx++] = yMin
+        coords[coordIdx++] = x; coords[coordIdx++] = yMax
     }
-    if (pts.isEmpty()) return
-    drawPoints(
-        points = pts,
-        pointMode = PointMode.Lines,
-        color = s.color.copy(alpha = 0.18f),
-        strokeWidth = 1f,
-    )
+    if (coordIdx == 0) return
+    val sigmaPaint = sigmaPaint()
+    sigmaPaint.color = s.color.copy(alpha = 0.18f).toArgb()
+    drawIntoCanvas { canvas ->
+        // drawLines принимает offset/count в количестве чисел (не пар).
+        // coordIdx уже считает использованные слоты — передаём как count.
+        canvas.nativeCanvas.drawLines(coords, 0, coordIdx, sigmaPaint)
+    }
 }
+
+/**
+ * Cached scratch Paint для drawSigma — переиспользуется между сериями.
+ * Создаётся лениво; цвет/alpha задаются вызывающим перед drawLines.
+ */
+private val sigmaPaintCache = android.graphics.Paint().apply {
+    style = android.graphics.Paint.Style.STROKE
+    strokeWidth = 1f
+    isAntiAlias = true
+}
+private fun sigmaPaint(): android.graphics.Paint = sigmaPaintCache
 
 // ============================================================
 // Helpers
 // ============================================================
+
+// Singleton Paint для меток осей / threshold текста.
+// Раньше new android.graphics.Paint() на КАЖДЫЙ drawText — это ~20 текстов на
+// чарт × 3 чарта × 30 fps = 1800 native-alloc/сек + setupGlyphCache.
+// Цвет/размер обновляются перед каждой надписью, остальное (antialias,
+// typeface) задаётся один раз при загрузке класса.
+private val textPaintCache = android.graphics.Paint().apply {
+    isAntiAlias = true
+    typeface = android.graphics.Typeface.MONOSPACE
+}
 
 private fun DrawScope.drawText(
     text: String, x: Float, y: Float,
@@ -715,20 +882,23 @@ private fun DrawScope.drawText(
     color: Color = NeonTheme.axisText,
     sizePx: Float = 10f * density,
 ) {
+    val paint = textPaintCache
+    paint.color = color.toArgb()
+    paint.textSize = sizePx
+    val w = paint.measureText(text)
+    val drawX = when {
+        alignCenter -> x - w / 2f
+        alignRight -> x - w
+        else -> x
+    }
     drawIntoCanvas { canvas ->
-        val paint = android.graphics.Paint().apply {
-            this.color = color.toArgb()
-            textSize = sizePx
-            isAntiAlias = true
-            typeface = android.graphics.Typeface.MONOSPACE
-        }
-        val w = paint.measureText(text)
-        val drawX = when {
-            alignCenter -> x - w / 2f
-            alignRight -> x - w
-            else -> x
-        }
+        // nativeCanvas не уважает Compose-clip (.clip(RoundedCornerShape)).
+        // Явный clipRect по границам Canvas гарантирует что текст не вылезет
+        // ни вправо (крайняя X-метка), ни влево (Y-метки у края), ни вверх/вниз.
+        canvas.nativeCanvas.save()
+        canvas.nativeCanvas.clipRect(0f, 0f, size.width, size.height)
         canvas.nativeCanvas.drawText(text, drawX, y, paint)
+        canvas.nativeCanvas.restore()
     }
 }
 
@@ -783,9 +953,10 @@ private fun CrosshairOverlay(
     if (c1 == null && c2 == null) return
     if (lastT <= firstT) return
 
-    val padR = if (series.any { it.axis == NeonAxis.RIGHT }) PAD_RIGHT_WITH_AXIS else PAD_RIGHT_BASE
     Canvas(Modifier.fillMaxSize()) {
-        val plotL = PAD_LEFT; val plotR = size.width - padR
+        val padAxis = (density * 25f).coerceAtLeast(PAD_LEFT_MIN)
+        val padR = if (series.any { it.axis == NeonAxis.RIGHT }) padAxis else PAD_RIGHT_BASE
+        val plotL = padAxis; val plotR = size.width - padR
         // Cursor 1 — белый.
         c1?.takeIf { it in firstT..lastT }?.let { t ->
             val x = plotL + (plotR - plotL) * (t - firstT).toFloat() / (lastT - firstT)
@@ -837,6 +1008,7 @@ private fun CrosshairOverlay(
         ) {
             Box(
                 modifier = Modifier
+                    .widthIn(max = 260.dp)   // не даём bubble вылезти за край карточки
                     .background(
                         color = NeonTheme.bg.copy(alpha = 0.92f),
                         shape = RoundedCornerShape(4.dp)
@@ -848,6 +1020,8 @@ private fun CrosshairOverlay(
                     color = NeonTheme.axisText,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

@@ -1,5 +1,6 @@
 package com.example.connectapp.data.repository
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -8,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.example.connectapp.data.models.BluetoothDeviceItem
@@ -16,9 +18,10 @@ import com.example.connectapp.network.BluetoothClient
 import com.example.connectapp.utils.Constants
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -60,7 +63,10 @@ class BluetoothRepository(
     private var receiver: BroadcastReceiver? = null
     private var connectionJob: Job? = null
     private var discoveryTimeoutJob: Job? = null
-    private val internalScope = MainScope()
+    // Раньше был MainScope() — это привязывало discovery-таймаут к Main-потоку
+    // и заставляло слой данных зависеть от UI-диспетчера. Теперь — независимый
+    // SupervisorJob на IO, чтобы падение одного job'а не утаскивало остальные.
+    private val internalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * "Намерение отключиться" — флаг на ТЕКУЩУЮ connect-сессию. Объект
@@ -77,11 +83,25 @@ class BluetoothRepository(
     fun isEnabled(): Boolean = adapter?.isEnabled == true
 
     @SuppressLint("MissingPermission")
-    fun bondedDevices(): List<BluetoothDeviceItem> = runCatching {
-        // На API 31+ без BLUETOOTH_CONNECT бросает SecurityException.
-        // Метод может быть вызван до получения разрешений — возвращаем пустой список.
-        adapter?.bondedDevices?.map { it.toItem(bonded = true) } ?: emptyList()
-    }.getOrDefault(emptyList())
+    fun bondedDevices(): List<BluetoothDeviceItem> {
+        // На API 31+ без BLUETOOTH_CONNECT бросает SecurityException;
+        // на API <31 та же ситуация без BLUETOOTH. Сначала явно проверяем
+        // permission — runCatching оставлен как страховка от вендорных багов.
+        if (!hasBluetoothConnectPermission()) return emptyList()
+        return runCatching {
+            adapter?.bondedDevices?.map { it.toItem(bonded = true) } ?: emptyList()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun hasBluetoothConnectPermission(): Boolean {
+        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Manifest.permission.BLUETOOTH_CONNECT
+        } else {
+            Manifest.permission.BLUETOOTH
+        }
+        return ContextCompat.checkSelfPermission(appContext, perm) ==
+            PackageManager.PERMISSION_GRANTED
+    }
 
     /** Publishes the current bonded device list without starting discovery. */
     fun refreshBonded() {

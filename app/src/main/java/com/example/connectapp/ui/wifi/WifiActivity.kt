@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material3.Button
@@ -50,7 +52,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -89,6 +93,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val log by viewModel.log.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
+    val haptic = LocalHapticFeedback.current
 
     var host by remember { mutableStateOf(viewModel.host) }
     var port by remember { mutableStateOf(viewModel.port) }
@@ -148,34 +153,47 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Inline validation: host пустой / port вне диапазона показываем
+                    // СРАЗУ при потере фокуса, а не toast'ом после нажатия Connect.
+                    val hostError = host.isNotEmpty() && host.isBlank()
+                    val parsedPort = port.toIntOrNull()
+                    val portError = port.isNotEmpty() && (parsedPort == null || parsedPort !in 1..65535)
                     OutlinedTextField(
                         value = host,
                         onValueChange = { host = it },
                         label = { Text(stringResource(R.string.hint_ip)) },
                         singleLine = true,
                         enabled = !connected,
+                        isError = hostError,
+                        supportingText = if (hostError) {
+                            @Composable { Text(stringResource(R.string.err_host_blank)) }
+                        } else null,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = port,
-                        onValueChange = { port = it.filter { c -> c.isDigit() } },
+                        onValueChange = { port = it.filter { c -> c.isDigit() }.take(5) },
                         label = { Text(stringResource(R.string.hint_port)) },
                         singleLine = true,
                         enabled = !connected,
+                        isError = portError,
+                        supportingText = if (portError) {
+                            @Composable { Text(stringResource(R.string.err_port_range)) }
+                        } else null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val canConnect = host.isNotBlank() &&
+                            parsedPort != null && parsedPort in 1..65535
                         Button(
                             onClick = {
-                                val p = port.toIntOrNull()
-                                if (host.isBlank() || p == null || p !in 1..65535) {
-                                    Toast.makeText(ctx, ctx.getString(R.string.toast_invalid_address), Toast.LENGTH_SHORT).show()
-                                } else {
-                                    viewModel.connect(host.trim(), p)
-                                }
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                // canConnect гарантирует не-null, но компилятор не выводит:
+                                // делаем явный non-null через !!.
+                                if (canConnect) viewModel.connect(host.trim(), parsedPort!!)
                             },
-                            enabled = !connected && !connecting,
+                            enabled = !connected && !connecting && canConnect,
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Filled.Link, contentDescription = null)
@@ -183,7 +201,10 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                             Text(stringResource(R.string.btn_connect))
                         }
                         OutlinedButton(
-                            onClick = { viewModel.disconnect() },
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                viewModel.disconnect()
+                            },
                             enabled = connected || connecting,
                             modifier = Modifier.weight(1f)
                         ) {
@@ -212,6 +233,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                 Button(
                     onClick = {
                         if (payload.isNotEmpty()) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             viewModel.send(payload)
                             payload = ""
                         }
@@ -246,33 +268,36 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
 
 @Composable
 internal fun StatusBadge(state: ConnectionState) {
-    val (label, color) = when (state) {
-        is ConnectionState.Idle -> stringResource(R.string.status_idle) to MaterialTheme.colorScheme.onSurfaceVariant
-        is ConnectionState.Connecting -> stringResource(R.string.status_connecting) to WarningAmber
-        is ConnectionState.Connected -> stringResource(R.string.status_connected) to SuccessGreen
-        is ConnectionState.Disconnected -> stringResource(R.string.status_disconnected) to ErrorRed
-        is ConnectionState.Reconnecting -> stringResource(R.string.status_reconnecting, state.attempt) to WarningAmber
-        is ConnectionState.Error -> stringResource(R.string.status_error, state.message) to ErrorRed
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(color = color.copy(alpha = 0.12f), shape = RoundedCornerShape(12.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp)
-    ) {
-        Box(
+    // Crossfade сглаживает скачки цвета при переходах Idle→Connecting→Connected.
+    Crossfade(targetState = state, label = "conn-status") { s ->
+        val (label, color) = when (s) {
+            is ConnectionState.Idle -> stringResource(R.string.status_idle) to MaterialTheme.colorScheme.onSurfaceVariant
+            is ConnectionState.Connecting -> stringResource(R.string.status_connecting) to WarningAmber
+            is ConnectionState.Connected -> stringResource(R.string.status_connected) to SuccessGreen
+            is ConnectionState.Disconnected -> stringResource(R.string.status_disconnected) to ErrorRed
+            is ConnectionState.Reconnecting -> stringResource(R.string.status_reconnecting, s.attempt) to WarningAmber
+            is ConnectionState.Error -> stringResource(R.string.status_error, s.message) to ErrorRed
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .size(10.dp)
-                .background(color = color, shape = CircleShape)
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            color = color,
-            fontWeight = FontWeight.SemiBold
-        )
+                .fillMaxWidth()
+                .background(color = color.copy(alpha = 0.12f), shape = RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .background(color = color, shape = CircleShape)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = color,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
     }
 }
 
@@ -292,14 +317,40 @@ internal fun LogView(log: String, modifier: Modifier = Modifier, autoScroll: Boo
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 shape = RoundedCornerShape(12.dp)
             )
-            .padding(12.dp)
+            .padding(12.dp),
+        contentAlignment = if (log.isEmpty()) Alignment.Center else Alignment.TopStart
     ) {
-        Text(
-            text = if (log.isEmpty()) stringResource(R.string.label_no_data) else log,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.verticalScroll(scroll)
-        )
+        if (log.isEmpty()) {
+            // Empty state с иконкой — раньше была просто строка «— нет данных —».
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Filled.HourglassEmpty,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(40.dp)
+                )
+                Text(
+                    text = stringResource(R.string.label_no_data),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.empty_log_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            Text(
+                text = log,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.verticalScroll(scroll)
+            )
+        }
     }
 }

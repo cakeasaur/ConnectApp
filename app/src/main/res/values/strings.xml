@@ -157,8 +157,43 @@
 
     <!-- Терминатор отправляемых команд -->
     <string name="settings_terminator">Терминатор команд</string>
+    <string name="settings_sample_rate">Частота опроса платы (для FFT/STFT)</string>
     <string name="term_lf" translatable="false">\\n (LF)</string>
     <string name="term_cr" translatable="false">\\r (CR)</string>
     <string name="term_crlf" translatable="false">\\r\\n (CRLF)</string>
     <string name="term_none">без</string>
+
+    <!-- Validation & empty-state -->
+    <string name="err_host_blank">Адрес не должен быть пустым</string>
+    <string name="err_port_range">Порт от 1 до 65535</string>
+    <string name="empty_log_hint">Подключитесь и отправьте команду, чтобы увидеть ответ</string>
+    <string name="quick_resume_title">Последнее устройство</string>
+
+    <!-- MQTT bridge -->
+    <string name="btn_mqtt">MQTT мост</string>
+    <string name="mqtt_subtitle">Публикация в Home Assistant / Grafana</string>
+    <string name="mqtt_title">MQTT мост</string>
+    <string name="mqtt_enabled">Включён</string>
+    <string name="mqtt_host">Хост брокера</string>
+    <string name="mqtt_port">Порт</string>
+    <string name="mqtt_tls">TLS (MQTTS)</string>
+    <string name="mqtt_trust_all">Доверять любым сертификатам</string>
+    <string name="mqtt_trust_all_warning">⚠ Принимает любой серверный сертификат — включай только для self-signed CA в локальной сети. На публичных адресах открывает MITM.</string>
+    <string name="mqtt_sub_cmd_warning">⚠ Любой, кто публикует в {prefix}/cmd, удалённо управляет твоей платой. Включай только когда брокер защищён логином/ACL.</string>
+    <string name="mqtt_user">Логин</string>
+    <string name="mqtt_pass">Пароль</string>
+    <string name="mqtt_client_id">Client ID (пусто — авто)</string>
+    <string name="mqtt_prefix">Префикс топиков</string>
+    <string name="mqtt_qos">QoS (0/1/2)</string>
+    <string name="mqtt_retained">Retained-публикации</string>
+    <string name="mqtt_throttle">Throttle на канал, мс</string>
+    <string name="mqtt_sub_cmd">Подписка на команды</string>
+    <string name="mqtt_apply">Применить</string>
+    <string name="mqtt_reconnect">Переподключиться</string>
+    <string name="mqtt_topics_title">Структура топиков</string>
+    <string name="mqtt_status_disabled">отключено</string>
+    <string name="mqtt_status_idle">ожидание</string>
+    <string name="mqtt_status_connecting">подключаюсь…</string>
+    <string name="mqtt_status_connected">подключено</string>
+    <string name="mqtt_status_error">ошибка: %1$s</string>
 </resources>

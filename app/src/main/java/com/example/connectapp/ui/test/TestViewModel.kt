@@ -84,7 +84,7 @@ class TestViewModel(
     }
 
     fun clearLog() {
-        logBuffer.clear(viewModelScope)
+        logBuffer.clear()
         synchronized(lineBuffer) { lineBuffer.clear() }
         _sensorData.value = SensorData()
         SensorDataBus.clear()

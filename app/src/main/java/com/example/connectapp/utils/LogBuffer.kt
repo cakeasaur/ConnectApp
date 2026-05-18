@@ -7,9 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 /**
  * Накопительный лог с фиксированным окном. Раньше appendLog был O(n) на каждое
@@ -32,8 +31,11 @@ class LogBuffer(
     private val _text = MutableStateFlow(initial)
     val text: StateFlow<String> = _text.asStateFlow()
 
+    // Защищает check-then-launch в schedulePublish. Раньше там был
+    // `if (publishJob?.isActive == true) return` — две корутины из разных
+    // потоков могли проскочить проверку одновременно и стартовать два job'а.
+    private val publishLock = Any()
     private var publishJob: Job? = null
-    private val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT)
 
     /** Сырая запись чанка (как пришёл с устройства, без префиксов). */
     fun appendRaw(chunk: String, scope: CoroutineScope) {
@@ -46,23 +48,32 @@ class LogBuffer(
 
     /** Запись «строки» с префиксом времени и переводом строки. */
     fun appendLine(line: String, scope: CoroutineScope) {
+        // DateTimeFormatter — immutable и thread-safe, в отличие от SimpleDateFormat.
+        // Время форматируем ВНЕ synchronized(sb), чтобы не держать lock на forматировании.
+        val prefix = LocalDateTime.now().format(TS_FORMATTER)
         synchronized(sb) {
-            sb.append('[').append(ts.format(Date())).append("] ").append(line)
+            sb.append('[').append(prefix).append("] ").append(line)
             if (!line.endsWith('\n')) sb.append('\n')
             trim()
         }
         schedulePublish(scope)
     }
 
-    fun clear(scope: CoroutineScope) {
+    fun clear() {
         synchronized(sb) { sb.setLength(0) }
-        publishJob?.cancel()
+        synchronized(publishLock) {
+            publishJob?.cancel()
+            publishJob = null
+        }
         _text.value = ""
     }
 
     /** Принудительная публикация (например, перед сохранением в SavedStateHandle). */
     fun flush() {
-        publishJob?.cancel()
+        synchronized(publishLock) {
+            publishJob?.cancel()
+            publishJob = null
+        }
         _text.value = synchronized(sb) { sb.toString() }
     }
 
@@ -72,14 +83,18 @@ class LogBuffer(
     }
 
     private fun schedulePublish(scope: CoroutineScope) {
-        if (publishJob?.isActive == true) return
-        publishJob = scope.launch {
-            delay(PUBLISH_DEBOUNCE_MS)
-            _text.value = synchronized(sb) { sb.toString() }
+        synchronized(publishLock) {
+            if (publishJob?.isActive == true) return
+            publishJob = scope.launch {
+                delay(PUBLISH_DEBOUNCE_MS)
+                _text.value = synchronized(sb) { sb.toString() }
+            }
         }
     }
 
     companion object {
         private const val PUBLISH_DEBOUNCE_MS = 80L
+        private val TS_FORMATTER: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     }
 }
