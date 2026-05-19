@@ -48,6 +48,17 @@ class IntegrationTest {
     }
 
     @Test
+    fun `integrate constant signal returns near zero after detrend`() {
+        // Constant 1.0 over 1 second (10 samples at 100ms). detrend before integration
+        // subtracts the flat baseline (slope=0, offset=1.0), yielding all-zero input.
+        // Integral of zero is zero. Second detrend is a no-op. No drift accumulates.
+        val points = (0 until 10).map { i -> TimedPoint(i * 100L, 1f) }
+        val result = Integration.integrate(points)
+        assertEquals(10, result.size)
+        for (p in result) assertEquals(0f, p.value, 1e-5f)
+    }
+
+    @Test
     fun `timestamps are preserved after integration`() {
         val points = listOf(
             TimedPoint(1000L, 0f),
