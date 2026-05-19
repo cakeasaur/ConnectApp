@@ -50,4 +50,10 @@ class Kalman1D(
 
         return estimate
     }
+
+    /** Сбросить состояние к начальным значениям. */
+    fun reset() {
+        estimate = 0f
+        covariance = 1f
+    }
 }
