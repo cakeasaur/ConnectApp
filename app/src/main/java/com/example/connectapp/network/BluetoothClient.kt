@@ -66,15 +66,17 @@ class BluetoothClient {
         val s = socket ?: throw IllegalStateException("Bluetooth socket is not connected")
         val input: InputStream = s.inputStream
         val buffer = ByteArray(Constants.READ_BUFFER_SIZE)
+        val decoder = LineDecoder()
         try {
             while (s.isConnected) {
                 val read = input.read(buffer)
                 if (read == -1) break
-                if (read > 0) trySend(String(buffer, 0, read, StandardCharsets.UTF_8))
+                if (read > 0) decoder.feed(buffer, read).forEach { trySend(it) }
             }
         } catch (_: Throwable) {
             // Closed below
         } finally {
+            decoder.flush()?.let { trySend(it) }
             close()
         }
         awaitClose { runCatching { input.close() } }

@@ -54,15 +54,17 @@ class WifiClient {
         val s = socket ?: throw IllegalStateException("Socket is not connected")
         val input: InputStream = s.getInputStream()
         val buffer = ByteArray(Constants.READ_BUFFER_SIZE)
+        val decoder = LineDecoder()
         try {
             while (!s.isClosed) {
                 val read = input.read(buffer)
                 if (read == -1) break
-                if (read > 0) trySend(String(buffer, 0, read, StandardCharsets.UTF_8))
+                if (read > 0) decoder.feed(buffer, read).forEach { trySend(it) }
             }
         } catch (_: Throwable) {
             // Любая I/O-ошибка (включая SocketTimeoutException) — для нас разрыв.
         } finally {
+            decoder.flush()?.let { trySend(it) }
             close()
         }
         awaitClose { runCatching { input.close() } }

@@ -46,18 +46,18 @@
 - Modify: `app/src/main/java/com/example/connectapp/network/BluetoothClient.kt`
 - Modify: `app/src/main/java/com/example/connectapp/network/WifiClient.kt`
 
-- [ ] В `BluetoothClient.incoming()` заменить прямое `String(buffer, 0, read, UTF_8)` на
+- [x] В `BluetoothClient.incoming()` заменить прямое `String(buffer, 0, read, UTF_8)` на
       накопление байт в `ByteArrayOutputStream`, разбивать поток по байту `\n` (0x0A),
       декодировать только полные строки. Незавершённый хвост держать в буфере до следующего
       `read()`. Это же гарантирует, что `DataParser.parse()` всегда получает цельную строку.
-- [ ] Применить тот же подход в `WifiClient.incoming()`.
-- [ ] Убедиться, что при закрытии сокета накопленный хвост без `\n` всё равно эмитируется
+- [x] Применить тот же подход в `WifiClient.incoming()`.
+- [x] Убедиться, что при закрытии сокета накопленный хвост без `\n` всё равно эмитируется
       (на случай устройств, которые не завершают последнюю строку).
-- [ ] Написать unit-тест `StreamDecoderTest` (без Android зависимостей): подать массив байт,
+- [x] Написать unit-тест `StreamDecoderTest` (без Android зависимостей): подать массив байт,
       в котором двухбайтовый UTF-8 символ разрезан по границе двух чанков — проверить,
       что на выходе строка без кракозябр. Тест можно написать на логике декодирования,
       вынесенной в отдельный pure-Kotlin объект, либо напрямую тестировать конечный автомат.
-- [ ] Запустить `./gradlew :app:testDebugUnitTest` — все тесты должны пройти.
+- [x] Запустить `./gradlew :app:testDebugUnitTest` — все тесты должны пройти.
 
 ### Task 2: Fix AlertEngine stale events on reconnect
 
