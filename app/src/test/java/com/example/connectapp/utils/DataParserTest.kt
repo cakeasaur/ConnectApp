@@ -86,6 +86,58 @@ class DataParserTest {
     }
 
     @Test
+    fun `temperature only line has null accel fields`() {
+        val r = DataParser.parse("Temp: 25.0 C")
+        assertNotNull(r)
+        assertEquals(25.0f, r!!.temperature1)
+        assertNull(r.accel1X)
+        assertNull(r.accel1Y)
+        assertNull(r.accel1Z)
+    }
+
+    @Test
+    fun `compact T-equals format is parsed`() {
+        val r = DataParser.parse("T=28.5")
+        assertNotNull(r)
+        assertEquals(28.5f, r!!.temperature1)
+    }
+
+    @Test
+    fun `negative accel values are parsed correctly`() {
+        val r = DataParser.parse("X: -128 Y: 0 Z: 64")
+        assertEquals(-128f, r?.accel1X)
+        assertEquals(0f, r?.accel1Y)
+        assertEquals(64f, r?.accel1Z)
+    }
+
+    @Test
+    fun `crlf line ending does not break parsing`() {
+        val r = DataParser.parse("T:23.5\r\n")
+        assertNotNull(r)
+        assertEquals(23.5f, r!!.temperature1)
+    }
+
+    @Test
+    fun `firmware CSV with negative temperatures parses correctly`() {
+        val r = DataParser.parse("1;-5.5;-3.2;0,0,0;0,0,0;0;0;")
+        assertNotNull(r)
+        assertEquals(-5.5f, r!!.temperature1)
+        assertEquals(-3.2f, r.temperature2)
+        assertEquals(0f, r.accel1X)
+        assertEquals(0f, r.accel2Z)
+    }
+
+    @Test
+    fun `bare 4 values with comma separator parses correctly`() {
+        val r = DataParser.parse("28.50,254,0,59")
+        assertNotNull(r)
+        assertEquals(28.5f, r!!.temperature1)
+        assertEquals(254f, r.accel1X)
+        assertEquals(0f, r.accel1Y)
+        assertEquals(59f, r.accel1Z)
+    }
+
+    @Test
     fun `negative temperature is parsed`() {
         val r = DataParser.parse("Temp: -12.5 C")
         assertEquals(-12.5f, r?.temperature1)
