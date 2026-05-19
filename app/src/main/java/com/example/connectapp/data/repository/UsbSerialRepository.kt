@@ -12,6 +12,7 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.network.UsbSerialClient
+import com.example.connectapp.utils.AlertEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -111,6 +112,7 @@ class UsbSerialRepository(
             }
             try {
                 client.connect(appContext, device, baudRate)
+                AlertEngine.clearEvents()
                 _state.value = ConnectionState.Connected
                 registerDetachReceiver()
                 try {
