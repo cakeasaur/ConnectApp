@@ -15,15 +15,16 @@ internal class LineDecoder {
         for (i in 0 until count) {
             val b = bytes[i]
             if (b == '\n'.code.toByte()) {
-                val s = acc.toString(StandardCharsets.UTF_8.name())
-                lines += if (s.endsWith('\r')) s.dropLast(1) else s
+                lines += emit(acc.toByteArray(), acc.size())
                 acc.reset()
             } else {
                 acc.write(b.toInt())
                 if (acc.size() >= MAX_LINE_BYTES) {
-                    val s = acc.toString(StandardCharsets.UTF_8.name())
-                    lines += if (s.endsWith('\r')) s.dropLast(1) else s
+                    val buf = acc.toByteArray()
+                    val boundary = lastCompleteBoundary(buf)
+                    lines += emit(buf, boundary)
                     acc.reset()
+                    for (j in boundary until buf.size) acc.write(buf[j].toInt())
                 }
             }
         }
@@ -32,8 +33,30 @@ internal class LineDecoder {
 
     fun flush(): String? {
         if (acc.size() == 0) return null
-        val s = acc.toString(StandardCharsets.UTF_8.name())
+        val s = emit(acc.toByteArray(), acc.size())
         acc.reset()
-        return s
+        return s.takeIf { it.isNotEmpty() }
+    }
+
+    private fun emit(buf: ByteArray, length: Int): String {
+        val s = String(buf, 0, length, StandardCharsets.UTF_8)
+        return if (s.endsWith('\r')) s.dropLast(1) else s
+    }
+
+    // Returns index of last complete UTF-8 boundary so that split multi-byte
+    // sequences at MAX_LINE_BYTES are not corrupted.
+    private fun lastCompleteBoundary(bytes: ByteArray): Int {
+        var i = bytes.size - 1
+        while (i >= 0 && (bytes[i].toInt() and 0xC0) == 0x80) i--
+        if (i < 0) return bytes.size
+        val lead = bytes[i].toInt() and 0xFF
+        val seqLen = when {
+            lead < 0x80 -> 1
+            lead < 0xC0 -> 1
+            lead < 0xE0 -> 2
+            lead < 0xF0 -> 3
+            else -> 4
+        }
+        return if (i + seqLen <= bytes.size) bytes.size else i
     }
 }

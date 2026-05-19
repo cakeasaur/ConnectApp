@@ -94,6 +94,31 @@ class StreamDecoderTest {
         assertEquals(1, lines.size)
         assertEquals("data", lines[0])
     }
+
+    @Test
+    fun `flush strips trailing cr`() {
+        val decoder = LineDecoder()
+        val bytes = "data\r".toByteArray(Charsets.UTF_8)
+        decoder.feed(bytes, bytes.size)
+        assertEquals("data", decoder.flush())
+    }
+
+    @Test
+    fun `MAX_LINE_BYTES boundary does not corrupt multi-byte character`() {
+        val decoder = LineDecoder()
+        // 4095 ASCII bytes + 2-byte cyrillic "И" (0xD0 0x98) + newline
+        // At byte 4096 the accumulator triggers with 0xD0 as the last byte —
+        // an incomplete 2-byte sequence; it must be carried over, not corrupted.
+        val ascii = ByteArray(4095) { 'a'.code.toByte() }
+        val cyrillic = "И".toByteArray(Charsets.UTF_8)
+        val newline = byteArrayOf('\n'.code.toByte())
+        val full = ascii + cyrillic + newline
+
+        val lines = decoder.feed(full, full.size)
+        assertEquals(2, lines.size)
+        assertEquals("a".repeat(4095), lines[0])
+        assertEquals("И", lines[1])
+    }
 }
 
 private fun LineDecoder.feed(bytes: ByteArray, offset: Int, count: Int): List<String> {
