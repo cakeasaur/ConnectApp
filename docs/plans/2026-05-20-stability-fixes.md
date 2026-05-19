@@ -70,12 +70,12 @@
 - Modify: `app/src/main/java/com/example/connectapp/data/repository/WifiRepository.kt`
 - Modify: `app/src/main/java/com/example/connectapp/data/repository/UsbSerialRepository.kt`
 
-- [ ] В `BluetoothRepository` найти место, где состояние переходит в `ConnectionState.Connected`
+- [x] В `BluetoothRepository` найти место, где состояние переходит в `ConnectionState.Connected`
       (после успешного `client.connect()`), добавить вызов `AlertEngine.clearEvents()` прямо
       перед установкой `_state.value = ConnectionState.Connected`.
-- [ ] То же самое в `WifiRepository`.
-- [ ] То же самое в `UsbSerialRepository`.
-- [ ] Запустить `./gradlew :app:testDebugUnitTest` — все тесты должны пройти.
+- [x] То же самое в `WifiRepository`.
+- [x] То же самое в `UsbSerialRepository`.
+- [x] Запустить `./gradlew :app:testDebugUnitTest` — все тесты должны пройти.
 
 ### Task 3: Expand DataParser edge case coverage
 

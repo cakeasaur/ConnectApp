@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.network.BluetoothClient
+import com.example.connectapp.utils.AlertEngine
 import com.example.connectapp.utils.Constants
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -174,6 +175,7 @@ class BluetoothRepository(
 
                     try {
                         client.connect(a, address)
+                        AlertEngine.clearEvents()
                         _state.value = ConnectionState.Connected
                         wasConnected = true
                         attempt = 0 // reset counter on successful connect

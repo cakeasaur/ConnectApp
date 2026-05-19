@@ -2,6 +2,7 @@ package com.example.connectapp.data.repository
 
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.network.WifiClient
+import com.example.connectapp.utils.AlertEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -46,6 +47,7 @@ class WifiRepository(
         _state.value = ConnectionState.Connecting
         try {
             client.connect(host, port)
+            AlertEngine.clearEvents()
             _state.value = ConnectionState.Connected
             readerJob = scope.launch {
                 try {
