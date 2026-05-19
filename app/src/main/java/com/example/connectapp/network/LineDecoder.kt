@@ -11,7 +11,8 @@ internal class LineDecoder {
         for (i in 0 until count) {
             val b = bytes[i]
             if (b == '\n'.code.toByte()) {
-                lines += acc.toString(StandardCharsets.UTF_8.name())
+                val s = acc.toString(StandardCharsets.UTF_8.name())
+                lines += if (s.endsWith('\r')) s.dropLast(1) else s
                 acc.reset()
             } else {
                 acc.write(b.toInt())

@@ -7,7 +7,7 @@
 ![MVVM](https://img.shields.io/badge/Architecture-MVVM%20%2B%20Repository-purple)
 ![UI](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose)
 
-Android-приложение для **двусторонней связи в реальном времени** с внешними устройствами через **Wi-Fi (TCP)** и **Bluetooth (SPP)**, с визуализацией данных датчиков на графиках.
+Android-приложение для **двусторонней связи в реальном времени** с внешними устройствами через **Wi-Fi (TCP)**, **Bluetooth (SPP)** и **USB Serial**, с визуализацией данных датчиков на графиках.
 
 ---
 
@@ -18,6 +18,7 @@ ConnectApp — приложение на **Kotlin + Jetpack Compose** с арх�
 **Возможности:**
 - ✅ **Wi-Fi (TCP)** для удалённых устройств — таймаут чтения, keep-alive
 - ✅ **Bluetooth (SPP)** для локальных устройств с авто-реконнектом
+- ✅ **USB Serial** через USB-OTG (FTDI, CP210x, CH340 и другие)
 - ✅ **Реальное время** — приём через `Flow<String>` и `callbackFlow`
 - ✅ **Сохранение логов** при повороте экрана (`SavedStateHandle`)
 - ✅ **Toast при потере соединения** + автоматический возврат на меню (Wi-Fi)
@@ -37,7 +38,7 @@ ConnectApp — приложение на **Kotlin + Jetpack Compose** с арх�
 | **AGP** | 8.5.2 |
 | **Gradle** | 8.9 |
 | **JDK** | 17 |
-| **Разрешения** | `INTERNET`, `BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` (`neverForLocation`) |
+| **Разрешения** | `INTERNET`, `BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` (`neverForLocation`), USB permission (динамически) |
 
 ---
 
@@ -87,7 +88,9 @@ while True:
 ./gradlew testDebugUnitTest
 ```
 
-Покрытие: `DataParser` (форматы verbose / compact / firmware-CSV / bare).
+Покрытие: `DataParser`, `LineDecoder` (UTF-8 split, CRLF), `Fft`, `Kalman1D`, `VibrationStats`, `CrossCorrelation`, `Integration`, `Orientation`, `HeatFlux`.
+
+При каждом успешном подключении (Bluetooth, Wi-Fi, USB Serial) буфер алертов очищается автоматически — после реконнекта не отображаются алерты предыдущей сессии.
 
 ---
 

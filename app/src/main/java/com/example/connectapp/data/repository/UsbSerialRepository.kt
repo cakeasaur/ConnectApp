@@ -154,7 +154,6 @@ class UsbSerialRepository(
                 if (intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
                     // Не пытаемся reconnect — кабель выдернут физически.
                     _state.value = ConnectionState.Disconnected
-                    runCatching { client } // noop reference to silence smart-cast
                 }
             }
         }

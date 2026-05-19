@@ -13,6 +13,8 @@ class VibrationStatsTest {
         val stats = computeVibrationStats(FloatArray(100) { 0f })
         assertEquals(0f, stats.rms, 1e-6f)
         assertEquals(0f, stats.peak, 1e-6f)
+        assertEquals(0f, stats.crest, 1e-6f)
+        assertEquals(0f, stats.kurtosis, 1e-6f)
     }
 
     @Test
@@ -43,7 +45,7 @@ class VibrationStatsTest {
         val amplitude = 4f
         val input = FloatArray(n) { i -> amplitude * sin(2.0 * PI * 5.0 * i / n).toFloat() }
         val stats = computeVibrationStats(input)
-        val expected = stats.peak / stats.rms
-        assertEquals(expected, stats.crest, 0.001f)
+        // For a sine wave, crest = peak / rms = A / (A/√2) = √2 ≈ 1.4142
+        assertEquals(sqrt(2f), stats.crest, 0.05f)
     }
 }
