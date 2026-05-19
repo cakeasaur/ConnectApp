@@ -54,6 +54,7 @@ class UsbSerialRepository(
 
     private var readerJob: Job? = null
     private var detachReceiver: BroadcastReceiver? = null
+    @Volatile private var connectedDevice: UsbDevice? = null
 
     fun refreshDevices() {
         _devices.value = client.probe(appContext).map { it.device }
@@ -112,6 +113,7 @@ class UsbSerialRepository(
             }
             try {
                 client.connect(appContext, device, baudRate)
+                connectedDevice = device
                 AlertEngine.clearEvents()
                 _state.value = ConnectionState.Connected
                 registerDetachReceiver()
@@ -140,6 +142,7 @@ class UsbSerialRepository(
 
     suspend fun disconnect() {
         unregisterDetachReceiver()
+        connectedDevice = null
         runCatching { client.close() }
         readerJob?.cancelAndJoin()
         readerJob = null
@@ -151,10 +154,11 @@ class UsbSerialRepository(
         if (detachReceiver != null) return
         val r = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                if (intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
-                    // Не пытаемся reconnect — кабель выдернут физически.
-                    _state.value = ConnectionState.Disconnected
-                }
+                if (intent.action != UsbManager.ACTION_USB_DEVICE_DETACHED) return
+                val detached = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                if (detached?.deviceId != connectedDevice?.deviceId) return
+                // Не пытаемся reconnect — кабель выдернут физически.
+                _state.value = ConnectionState.Disconnected
             }
         }
         ContextCompat.registerReceiver(
@@ -173,6 +177,7 @@ class UsbSerialRepository(
 
     fun release() {
         unregisterDetachReceiver()
+        connectedDevice = null
         readerJob?.cancel()
         readerJob = null
     }

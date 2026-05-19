@@ -72,7 +72,7 @@ object AlertEngine {
     private val eventsBuffer = ArrayDeque<AlertEvent>(MAX_EVENTS)
     private val _events = MutableStateFlow<List<AlertEvent>>(emptyList())
     val events: StateFlow<List<AlertEvent>> = _events.asStateFlow()
-    private var lastVibrateTime = 0L
+    @Volatile private var lastVibrateTime = 0L
     private var started = false
 
     // ---- Public API --------------------------------------------------------
