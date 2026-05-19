@@ -41,8 +41,10 @@ class IntegrationTest {
         )
         val result = Integration.integrate(points)
         assertEquals(5, result.size)
+        // Trapezoid integral = 0.4, then detrend subtracts the linear slope (0→0.4 over 400ms),
+        // yielding symmetric [-0.05, 0, 0.05, 0] around zero.
         val maxVal = result.maxOf { it.value }
-        assertTrue(maxVal > 0f)
+        assertEquals(0.05f, maxVal, 1e-4f)
     }
 
     @Test

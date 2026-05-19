@@ -89,6 +89,8 @@ object AlertEngine {
     fun clearAll() { _thresholds.value = emptyMap() }
 
     fun clearEvents() {
+        lastNotifTime.clear()
+        lastVibrateTime = 0L
         synchronized(eventsLock) {
             eventsBuffer.clear()
             _events.value = emptyList()

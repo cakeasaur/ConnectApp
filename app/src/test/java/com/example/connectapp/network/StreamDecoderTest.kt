@@ -92,7 +92,7 @@ class StreamDecoderTest {
         val bytes = "data\r\n".toByteArray(Charsets.UTF_8)
         val lines = decoder.feed(bytes, bytes.size)
         assertEquals(1, lines.size)
-        assertEquals("data\r", lines[0])
+        assertEquals("data", lines[0])
     }
 }
 
