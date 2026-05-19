@@ -27,8 +27,9 @@ class CrossCorrelationTest {
         // y is x shifted forward (y leads x by lead samples)
         val y = FloatArray(n) { i -> if (i + lead < n) x[i + lead] else 0f }
         val corr = CrossCorrelation.normalized(x, y, maxLag)
-        val (lag, _) = CrossCorrelation.bestLag(corr, maxLag)
+        val (lag, value) = CrossCorrelation.bestLag(corr, maxLag)
         assertEquals(lead, lag)
+        assertEquals(1f, value, 0.1f)
     }
 
     @Test

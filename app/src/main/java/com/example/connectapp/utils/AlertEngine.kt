@@ -72,8 +72,8 @@ object AlertEngine {
     private val eventsBuffer = ArrayDeque<AlertEvent>(MAX_EVENTS)
     private val _events = MutableStateFlow<List<AlertEvent>>(emptyList())
     val events: StateFlow<List<AlertEvent>> = _events.asStateFlow()
-    @Volatile private var lastVibrateTime = 0L
-    private var started = false
+    private val lastVibrateTime = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile private var started = false
 
     // ---- Public API --------------------------------------------------------
 
@@ -90,7 +90,7 @@ object AlertEngine {
 
     fun clearEvents() {
         lastNotifTime.clear()
-        lastVibrateTime = 0L
+        lastVibrateTime.set(0L)
         synchronized(eventsLock) {
             eventsBuffer.clear()
             _events.value = emptyList()
@@ -168,8 +168,9 @@ object AlertEngine {
 
     private fun vibrate(context: Context) {
         val now = System.currentTimeMillis()
-        if (now - lastVibrateTime < VIBRATE_COOLDOWN_MS) return
-        lastVibrateTime = now
+        val last = lastVibrateTime.get()
+        if (now - last < VIBRATE_COOLDOWN_MS) return
+        if (!lastVibrateTime.compareAndSet(last, now)) return
         // Двойной импульс: 200мс + пауза 100мс + 300мс — узнаваемо отличается
         // от обычного уведомления однократного жужжания.
         val pattern = longArrayOf(0, 200, 100, 300)
