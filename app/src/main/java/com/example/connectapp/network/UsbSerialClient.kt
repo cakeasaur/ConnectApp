@@ -77,16 +77,19 @@ class UsbSerialClient {
     fun incoming(): Flow<String> = flow {
         val p = port ?: throw IllegalStateException("USB port не открыт")
         val buffer = ByteArray(2048)
-        while (currentCoroutineContext().isActive) {
-            val read = try {
-                p.read(buffer, 200)
-            } catch (_: Throwable) {
-                break  // I/O ошибка или порт закрыт другим методом
+        val decoder = LineDecoder()
+        try {
+            while (currentCoroutineContext().isActive) {
+                val read = try {
+                    p.read(buffer, 200)
+                } catch (_: Throwable) {
+                    break  // I/O ошибка или порт закрыт другим методом
+                }
+                if (read > 0) decoder.feed(buffer, read).forEach { emit(it) }
+                // read == 0 → таймаут, продолжаем (yield не нужен — есть IO timeout).
             }
-            if (read > 0) {
-                emit(String(buffer, 0, read, StandardCharsets.UTF_8))
-            }
-            // read == 0 → таймаут, продолжаем (yield не нужен — есть IO timeout).
+        } finally {
+            decoder.flush()?.let { emit(it) }
         }
     }.flowOn(Dispatchers.IO)
 

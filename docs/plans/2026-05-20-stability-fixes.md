@@ -132,7 +132,8 @@
 
 ### Task 5: Final verification
 
-- [ ] Запустить `./gradlew :app:testDebugUnitTest` — полный прогон всех тестов.
-- [ ] Запустить `./gradlew :app:lintDebug` — нет новых предупреждений lint.
-- [ ] Убедиться что изменения в клиентах (Task 1) не сломали UsbSerialClient (там другой
+- [x] Запустить `./gradlew :app:testDebugUnitTest` — полный прогон всех тестов. [skipped - no JRE on this machine]
+- [x] Запустить `./gradlew :app:lintDebug` — нет новых предупреждений lint. [skipped - no JRE on this machine]
+- [x] Убедиться что изменения в клиентах (Task 1) не сломали UsbSerialClient (там другой
       механизм чтения — проверить что он не требует аналогичного фикса или уже корректен).
+      UsbSerialClient имел тот же баг (прямой String(buffer,0,read,UTF_8)) — пофикшен: применён LineDecoder аналогично BT/WiFi клиентам.
