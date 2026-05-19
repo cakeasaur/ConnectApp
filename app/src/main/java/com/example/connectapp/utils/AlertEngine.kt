@@ -73,7 +73,7 @@ object AlertEngine {
     private val _events = MutableStateFlow<List<AlertEvent>>(emptyList())
     val events: StateFlow<List<AlertEvent>> = _events.asStateFlow()
     private val lastVibrateTime = java.util.concurrent.atomic.AtomicLong(0L)
-    @Volatile private var started = false
+    private val started = java.util.concurrent.atomic.AtomicBoolean(false)
 
     // ---- Public API --------------------------------------------------------
 
@@ -102,8 +102,7 @@ object AlertEngine {
      * вызов игнорируется. Нужен Context для нотификаций и вибрации.
      */
     fun start(context: Context) {
-        if (started) return
-        started = true
+        if (!started.compareAndSet(false, true)) return
         val appCtx = context.applicationContext
         ensureChannel(appCtx)
 

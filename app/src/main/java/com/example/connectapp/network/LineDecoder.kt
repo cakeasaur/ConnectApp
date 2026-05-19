@@ -21,7 +21,8 @@ internal class LineDecoder {
             } else {
                 acc.write(b.toInt())
                 if (acc.size() >= MAX_LINE_BYTES) {
-                    lines += acc.toString(StandardCharsets.UTF_8.name())
+                    val s = acc.toString(StandardCharsets.UTF_8.name())
+                    lines += if (s.endsWith('\r')) s.dropLast(1) else s
                     acc.reset()
                 }
             }
