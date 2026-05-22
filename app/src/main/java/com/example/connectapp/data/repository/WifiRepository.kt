@@ -37,14 +37,16 @@ class WifiRepository(
             is ConnectionState.Connected, is ConnectionState.Connecting -> return
             else -> { /* fall through */ }
         }
+        // Выставляем Connecting ДО первой точки приостановки — иначе два быстрых
+        // вызова connect() оба пройдут проверку состояния, пока оно ещё Idle,
+        // и создадут два сокета (второй перезапишет первый в WifiClient → утечка).
+        _state.value = ConnectionState.Connecting
         // Дожидаемся завершения предыдущего reader'а ДО открытия нового сокета —
         // иначе старый job в finally закроет client, уже принадлежащий новой сессии.
         readerJob?.cancelAndJoin()
         readerJob = null
         // Гарантируем, что прошлый сокет закрыт (на случай Error/Disconnected без disconnect()).
         runCatching { client.close() }
-
-        _state.value = ConnectionState.Connecting
         try {
             client.connect(host, port)
             AlertEngine.clearEvents()
