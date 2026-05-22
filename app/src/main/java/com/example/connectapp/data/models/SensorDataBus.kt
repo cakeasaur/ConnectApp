@@ -62,16 +62,16 @@ object SensorDataBus {
     }
 
     private fun push(ch: Channel, point: TimedPoint) {
-        val snapshot = com.example.connectapp.utils.PerfTrace.measure("bus.push") {
+        // flow.value выставляется ВНУТРИ synchronized — иначе два потока (BT + USB
+        // одновременно) могут взять снимки в правильном порядке, но присвоить
+        // flow.value в обратном: подписчики увидят откат на одну точку назад.
+        com.example.connectapp.utils.PerfTrace.measure("bus.push") {
             synchronized(ch.deque) {
                 ch.deque.addLast(point)
                 if (ch.deque.size > MAX_POINTS) ch.deque.removeFirst()
-                // toList() копирует только один раз — StateFlow требует
-                // нового объекта, иначе подписчики не получат уведомление.
-                ch.deque.toList()
+                ch.flow.value = ch.deque.toList()
             }
         }
-        ch.flow.value = snapshot
     }
 
     /**

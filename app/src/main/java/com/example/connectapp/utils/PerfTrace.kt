@@ -20,7 +20,7 @@ import android.util.Log
 object PerfTrace {
 
     /** Глобальный выключатель. false = весь measure {} превращается в обычный block(). */
-    const val ENABLED = true
+    const val ENABLED = false
 
     private const val TAG = "PerfTrace"
     private const val FLUSH_INTERVAL_MS = 1000L
