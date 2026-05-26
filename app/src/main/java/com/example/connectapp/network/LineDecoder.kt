@@ -14,9 +14,11 @@ internal class LineDecoder {
         val lines = mutableListOf<String>()
         for (i in 0 until count) {
             val b = bytes[i]
-            if (b == '\n'.code.toByte()) {
-                lines += emit(acc.toByteArray(), acc.size())
-                acc.reset()
+            if (b == '\n'.code.toByte() || b == '\r'.code.toByte()) {
+                if (acc.size() > 0) {
+                    lines += emit(acc.toByteArray(), acc.size())
+                    acc.reset()
+                }
             } else {
                 acc.write(b.toInt())
                 if (acc.size() >= MAX_LINE_BYTES) {
@@ -38,10 +40,8 @@ internal class LineDecoder {
         return s.takeIf { it.isNotEmpty() }
     }
 
-    private fun emit(buf: ByteArray, length: Int): String {
-        val s = String(buf, 0, length, StandardCharsets.UTF_8)
-        return if (s.endsWith('\r')) s.dropLast(1) else s
-    }
+    private fun emit(buf: ByteArray, length: Int): String =
+        String(buf, 0, length, StandardCharsets.UTF_8)
 
     // Returns index of last complete UTF-8 boundary so that split multi-byte
     // sequences at MAX_LINE_BYTES are not corrupted.
