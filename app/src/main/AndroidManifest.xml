@@ -79,10 +79,15 @@
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
 
+        <!-- GraphActivity открывается из BluetoothActivity, UsbSerialActivity
+             или TestActivity. parentActivityName зашит на BluetoothActivity
+             заставлял system Up-стрелку всегда вести в BT-экран независимо
+             от источника. Без parentActivityName Up-навигация делегируется
+             onBackPressed() / finish() — возврат к Activity, которая нас
+             открыла. -->
         <activity
             android:name=".ui.graph.GraphActivity"
-            android:exported="false"
-            android:parentActivityName=".ui.bluetooth.BluetoothActivity" />
+            android:exported="false" />
 
         <activity
             android:name=".ui.test.TestActivity"
