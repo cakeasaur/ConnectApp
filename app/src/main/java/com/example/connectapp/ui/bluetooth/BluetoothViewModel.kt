@@ -85,9 +85,16 @@ class BluetoothViewModel(
             }
         }
         // Forward commands posted from GraphActivity (or any other screen).
+        // Фильтр по target: команда с target=null — broadcast (MQTT),
+        // реагируем; target="bt" — адресовано нам, реагируем; любое
+        // другое значение — игнор (раньше тут шла любая команда, что
+        // ломало сценарий «BT + USB одновременно подключены»).
         viewModelScope.launch {
             CommandBus.commands.collect { cmd ->
-                if (state.value is ConnectionState.Connected) sendSilent(cmd)
+                val forUs = cmd.target == null || cmd.target == FG_OWNER
+                if (forUs && state.value is ConnectionState.Connected) {
+                    sendSilent(cmd.payload)
+                }
             }
         }
         // Auto-monitor + foreground service: при ПЕРЕХОДЕ в Connected

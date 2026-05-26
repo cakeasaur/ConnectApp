@@ -53,12 +53,17 @@ class WifiViewModel(
                 scheduleSave()
             }
         }
-        // Команды из MQTT/GraphActivity — отправляем на плату только если
-        // мы сейчас активный коннект (Connected). Иначе игнорируем — другой
-        // VM (BT/USB) тоже слушает, пусть он и отвечает.
+        // Команды из MQTT/GraphActivity. target=null — broadcast (MQTT),
+        // принимаем; target="wifi" — адресовано нам; иначе игнор.
+        // Сейчас GraphActivity не открывается из WifiActivity (Wi-Fi —
+        // терминал без графиков), но фильтр оставлен симметрично BT/USB
+        // на случай добавления.
         viewModelScope.launch {
             CommandBus.commands.collect { cmd ->
-                if (state.value is ConnectionState.Connected) sendSilent(cmd)
+                val forUs = cmd.target == null || cmd.target == FG_OWNER
+                if (forUs && state.value is ConnectionState.Connected) {
+                    sendSilent(cmd.payload)
+                }
             }
         }
         // Глобальный статус для banner'а на MainActivity.

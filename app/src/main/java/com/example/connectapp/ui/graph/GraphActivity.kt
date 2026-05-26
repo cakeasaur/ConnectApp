@@ -104,6 +104,11 @@ class GraphActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Источник транспорта зашит в Intent caller'ом (BluetoothActivity,
+        // UsbSerialActivity, TestActivity). Если extra отсутствует (например,
+        // запуск напрямую через ADB или старый shortcut) — fallback на "bt"
+        // для совместимости со старым поведением «всё уходило в BT».
+        val transport = intent.getStringExtra(EXTRA_TRANSPORT) ?: DEFAULT_TRANSPORT
         setContent {
             AppThemeWithSettings {
                 GraphScreen(
@@ -112,9 +117,17 @@ class GraphActivity : ComponentActivity() {
                     onExportPdf = { exportPdf() },
                     onScreenshot = { shareScreenshot() },
                     loadingStatus = loadingStatus,
+                    transport = transport,
                 )
             }
         }
+    }
+
+    companion object {
+        /** Ключ Intent extra: транспорт-источник графиков ("bt"/"usb"/"test"). */
+        const val EXTRA_TRANSPORT = "transport"
+        /** Fallback при отсутствии extra — BT, как было до фикса. */
+        const val DEFAULT_TRANSPORT = "bt"
     }
 
     private fun exportPdf() {
@@ -263,6 +276,7 @@ private fun GraphScreen(
     onExportPdf: () -> Unit,
     onScreenshot: () -> Unit,
     loadingStatus: kotlinx.coroutines.flow.StateFlow<String?>,
+    transport: String,
 ) {
     // Частота опроса из настроек — используется в FFT/STFT для подписей оси
     // частот и расчёта периодов. Меняется в SettingsDialog → DataStore.
@@ -475,16 +489,16 @@ private fun GraphScreen(
             val cmdQuick = stringResource(R.string.cmd_three)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
-                    onClick = { CommandBus.send(cmdCalib) },
+                    onClick = { CommandBus.send(cmdCalib, transport) },
                     modifier = Modifier.weight(1f)
                 ) { Text("calib") }
                 FilledTonalButton(
-                    onClick = { CommandBus.send(cmdQuick) },
+                    onClick = { CommandBus.send(cmdQuick, transport) },
                     modifier = Modifier.weight(1f)
                 ) { Text("test") }
                 Button(
                     onClick = {
-                        CommandBus.send(cmdStart)
+                        CommandBus.send(cmdStart, transport)
                         monitoring = !monitoring
                     },
                     modifier = Modifier.weight(1f)

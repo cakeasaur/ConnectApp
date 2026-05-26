@@ -80,7 +80,12 @@ class UsbSerialActivity : ComponentActivity() {
                 UsbScreen(
                     viewModel = viewModel,
                     onBack = { finish() },
-                    onOpenGraphs = { startActivity(Intent(this, GraphActivity::class.java)) }
+                    onOpenGraphs = {
+                        startActivity(
+                            Intent(this, GraphActivity::class.java)
+                                .putExtra(GraphActivity.EXTRA_TRANSPORT, "usb")
+                        )
+                    }
                 )
             }
         }
