@@ -63,10 +63,14 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
                 withContext(Dispatchers.Default) { parseChunk(chunk) }
             }
         }
-        // Команды из MQTT/GraphActivity — только если USB активен.
+        // Команды из MQTT/GraphActivity. target=null — broadcast (MQTT),
+        // принимаем; target="usb" — адресовано нам; иначе игнор.
         viewModelScope.launch {
             CommandBus.commands.collect { cmd ->
-                if (state.value is ConnectionState.Connected) sendSilent(cmd)
+                val forUs = cmd.target == null || cmd.target == FG_OWNER
+                if (forUs && state.value is ConnectionState.Connected) {
+                    sendSilent(cmd.payload)
+                }
             }
         }
         // Глобальный статус для banner'а на главном экране.

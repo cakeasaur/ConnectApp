@@ -174,7 +174,9 @@ object MqttBridge {
                     .qos(MqttQos.AT_LEAST_ONCE)
                     .callback { pub ->
                         val cmd = String(pub.payloadAsBytes).trim()
-                        if (cmd.isNotEmpty()) CommandBus.send(cmd)
+                        // broadcast — команда из MQTT не привязана к транспорту,
+                        // должна попасть на любую активную плату (BT/USB/Wi-Fi).
+                        if (cmd.isNotEmpty()) CommandBus.broadcast(cmd)
                     }
                     .send().await()
             }

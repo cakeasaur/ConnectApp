@@ -120,7 +120,14 @@ class BluetoothActivity : ComponentActivity() {
                 BluetoothScreen(
                     viewModel = viewModel,
                     onBack = { finish() },
-                    onOpenGraphs = { startActivity(Intent(this, GraphActivity::class.java)) }
+                    onOpenGraphs = {
+                        // Помечаем источник, чтобы CommandBus.send из графиков
+                        // адресно ушёл только в BluetoothViewModel.
+                        startActivity(
+                            Intent(this, GraphActivity::class.java)
+                                .putExtra(GraphActivity.EXTRA_TRANSPORT, "bt")
+                        )
+                    }
                 )
             }
         }

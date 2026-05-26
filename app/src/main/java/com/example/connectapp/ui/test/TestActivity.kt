@@ -85,7 +85,16 @@ class TestActivity : ComponentActivity() {
                 TestScreen(
                     viewModel = viewModel,
                     onBack = { finish() },
-                    onOpenGraphs = { startActivity(Intent(this, GraphActivity::class.java)) }
+                    onOpenGraphs = {
+                        // "test" — TestViewModel не подписан на CommandBus
+                        // (нет реального транспорта). Передаём для логики
+                        // фильтрации в других VM: ни один из них на эту
+                        // команду не отреагирует, что и нужно.
+                        startActivity(
+                            Intent(this, GraphActivity::class.java)
+                                .putExtra(GraphActivity.EXTRA_TRANSPORT, "test")
+                        )
+                    }
                 )
             }
         }
