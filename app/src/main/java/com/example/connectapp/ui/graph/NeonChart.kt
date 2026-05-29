@@ -42,8 +42,13 @@ import com.example.connectapp.math.Fft
 import com.example.connectapp.utils.PerfTrace
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.roundToInt
 
 // ============================================================
 // Public API
@@ -87,6 +92,10 @@ data class NeonChartConfig(
     val phaseLock: Boolean = false,
     /** Частота дискретизации для FFT в phase-lock режиме. */
     val sampleRateHz: Float = 10f,
+    /** Единица измерения левой оси (например "°C", "LSB"). null = без подписи. */
+    val yUnitLeft: String? = null,
+    /** Единица измерения правой оси. null = без подписи. */
+    val yUnitRight: String? = null,
 )
 
 /**
@@ -247,6 +256,8 @@ fun NeonChart(
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
         )
         // Индикатор зума снизу-справа: "×2.5". Двойной тап сбрасывает.
+        // bottom-отступ поднят над полосой подписей X (PAD_BOTTOM пикселей),
+        // иначе "×14.0" наезжает на крайнюю метку секунд.
         if (zoom != null && zoom.isZoomed) {
             Text(
                 "×${"%.1f".format(Locale.ROOT, zoom.scaleX)}",
@@ -255,7 +266,7 @@ fun NeonChart(
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(8.dp)
+                    .padding(end = 8.dp, bottom = ((PAD_BOTTOM + 6f) / localDensity).dp)
                     .background(NeonTheme.bg.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             )
@@ -351,13 +362,67 @@ private data class AxisBounds(val yMin: Float, val yMax: Float) {
     val range: Float get() = (yMax - yMin).coerceAtLeast(1e-6f)
 }
 
-private data class ChartBounds(val left: AxisBounds, val right: AxisBounds?)
+private data class ChartBounds(val left: AxisBounds, val right: AxisBounds?, val divisions: Int)
+
+/**
+ * "Nice number" по алгоритму Heckbert: округляет величину к 1/2/5/10 × 10ⁿ.
+ * round=true — ближайшее nice (для шага), false — наименьшее не меньшее (для диапазона).
+ */
+private fun niceNum(range: Float, round: Boolean): Float {
+    if (range <= 0f || !range.isFinite()) return 1f
+    val exp = floor(log10(range.toDouble()))
+    val base = 10.0.pow(exp)
+    val frac = range / base
+    val niceFrac = if (round) {
+        when { frac < 1.5 -> 1.0; frac < 3.0 -> 2.0; frac < 7.0 -> 5.0; else -> 10.0 }
+    } else {
+        when { frac <= 1.0 -> 1.0; frac <= 2.0 -> 2.0; frac <= 5.0 -> 5.0; else -> 10.0 }
+    }
+    return (niceFrac * base).toFloat()
+}
+
+/** Вырожденный диапазон (плоская линия) → симметричное окно ±span вокруг центра. */
+private fun degenerateBounds(value: Float, span: Float): AxisBounds {
+    val c = if (value.isFinite()) value else 0f
+    return AxisBounds(c - span, c + span)
+}
+
+/**
+ * Округляет диапазон min..max до nice-границ и возвращает число делений сетки.
+ * Метки получаются «круглыми» (24.0, 24.5, …) вместо 23.7/24.6/25.4.
+ */
+private fun niceBounds(min: Float, max: Float, targetTicks: Int): Pair<AxisBounds, Int> {
+    val span = max - min
+    if (span <= 1e-6f || !span.isFinite()) return degenerateBounds(min, 1f) to 2
+    val step = niceNum(span / targetTicks, round = true)
+    val niceMin = floor(min / step) * step
+    val niceMax = ceil(max / step) * step
+    val div = ((niceMax - niceMin) / step).roundToInt().coerceIn(2, 8)
+    return AxisBounds(niceMin, niceMax) to div
+}
+
+/**
+ * Подгоняет правую ось под ЗАДАННОЕ число делений (общая сетка с левой осью):
+ * подбирает nice-шаг так, чтобы divisions шагов покрыли диапазон min..max.
+ */
+private fun fitAxis(min: Float, max: Float, divisions: Int): AxisBounds {
+    val span = max - min
+    if (span <= 1e-6f || !span.isFinite()) return degenerateBounds(min, divisions / 2f)
+    var step = niceNum(span / divisions, round = true)
+    var niceMin = floor(min / step) * step
+    var guard = 0
+    while (niceMin + step * divisions < max - 1e-4f && guard++ < 8) {
+        step = niceNum(step * 1.5f, round = true)
+        niceMin = floor(min / step) * step
+    }
+    return AxisBounds(niceMin, niceMin + step * divisions)
+}
 
 private fun computeBounds(
     series: List<NeonSeries>,
     thresholds: List<NeonThreshold>
 ): ChartBounds {
-    fun boundsFor(axis: NeonAxis): AxisBounds? {
+    fun rawBoundsFor(axis: NeonAxis): Pair<Float, Float>? {
         val relevant = series.filter { it.axis == axis }
         val thr = thresholds.filter { it.axis == axis }
         if (relevant.isEmpty() && thr.isEmpty()) return null
@@ -372,12 +437,18 @@ private fun computeBounds(
             if (t.value > mx) mx = t.value
         }
         if (!mn.isFinite() || !mx.isFinite()) return null
-        val pad = ((mx - mn) * 0.1f).coerceAtLeast(0.5f)
-        return AxisBounds(mn - pad, mx + pad)
+        return mn to mx
     }
-    val left = boundsFor(NeonAxis.LEFT) ?: AxisBounds(-1f, 1f)
-    val right = boundsFor(NeonAxis.RIGHT)
-    return ChartBounds(left, right)
+    // Запас 8% сверху/снизу ДО округления — иначе данные с экстремумом ровно
+    // на nice-границе утыкаются в край графика (az на правой оси обрезался снизу).
+    fun pad(b: Pair<Float, Float>): Pair<Float, Float> {
+        val d = (b.second - b.first) * 0.08f
+        return (b.first - d) to (b.second + d)
+    }
+    val leftRaw = pad(rawBoundsFor(NeonAxis.LEFT) ?: (-1f to 1f))
+    val (left, divisions) = niceBounds(leftRaw.first, leftRaw.second, targetTicks = 6)
+    val right = rawBoundsFor(NeonAxis.RIGHT)?.let { val p = pad(it); fitAxis(p.first, p.second, divisions) }
+    return ChartBounds(left, right, divisions)
 }
 
 // ============================================================
@@ -423,33 +494,48 @@ private fun DrawScope.drawNeonChart(
     fun xPx(t: Long) = plotL + plotW * (t - firstT).toFloat() / tRange
     fun yPx(value: Float, ab: AxisBounds) = plotB - plotH * (value - ab.yMin) / ab.range
 
-    // 1. Grid: 5 horizontal divisions, 6 vertical.
-    val hDiv = 5
-    val vDiv = 6
+    // 1. Grid. Горизонталь: nice-деления оси Y. Вертикаль рисуем ниже по
+    // «круглым» отметкам времени — тут только верх/низ и боковые границы.
+    val hDiv = bounds.divisions
     for (i in 0..hDiv) {
         val y = plotT + plotH * i / hDiv
         val color = if (i == 0 || i == hDiv) NeonTheme.gridMajor else NeonTheme.gridMinor
         drawLine(color, Offset(plotL, y), Offset(plotR, y), strokeWidth = 0.5f)
     }
-    for (i in 0..vDiv) {
-        val x = plotL + plotW * i / vDiv
-        val color = if (i == 0 || i == vDiv) NeonTheme.gridMajor else NeonTheme.gridMinor
-        drawLine(color, Offset(x, plotT), Offset(x, plotB), strokeWidth = 0.5f)
-    }
+    drawLine(NeonTheme.gridMajor, Offset(plotL, plotT), Offset(plotL, plotB), strokeWidth = 0.5f)
+    drawLine(NeonTheme.gridMajor, Offset(plotR, plotT), Offset(plotR, plotB), strokeWidth = 0.5f)
 
-    // 2. Y-axis labels (left).
-    drawAxisLabelsY(bounds.left, plotL - 4f, plotT, plotB, hDiv, right = false)
-    bounds.right?.let { drawAxisLabelsY(it, plotR + 4f, plotT, plotB, hDiv, right = true) }
+    // 2. Y-axis labels (left + опц. right) с единицами на верхней метке.
+    drawAxisLabelsY(bounds.left, plotL - 4f, plotT, plotB, hDiv, right = false, unit = config.yUnitLeft)
+    bounds.right?.let { drawAxisLabelsY(it, plotR + 4f, plotT, plotB, hDiv, right = true, unit = config.yUnitRight) }
 
-    // 3. X-axis labels (4 ticks).
+    // 3. Вертикальная сетка + подписи X по «круглым» отметкам времени.
+    // Шаг времени округляется к nice-числу → секунды снизу ровные (0.2/0.4/
+    // 0.6…), а не 0.2/0.4/0.7 от деления окна на равные пиксели.
     val seconds = (lastT - firstT) / 1000f
-    val useDecimal = seconds < 10f
-    for (i in 0..vDiv) {
-        val x = plotL + plotW * i / vDiv
-        val t = firstT + tRange * i / vDiv
-        val sec = (t - firstT) / 1000f
-        val txt = if (useDecimal) "%.1fs".format(Locale.ROOT, sec) else "${sec.toInt()}s"
-        drawText(txt, x, plotB + 14f, alignCenter = true)
+    if (seconds > 1e-3f) {
+        val tStep = niceNum(seconds / 6f, round = true)
+        val decimals = when { tStep >= 1f -> 0; tStep >= 0.1f -> 1; else -> 2 }
+        var k = 0
+        while (true) {
+            val tSec = k * tStep
+            if (tSec > seconds + 1e-3f) break
+            val frac = tSec / seconds
+            val x = plotL + plotW * frac
+            // интерьерные линии — minor (края уже нарисованы major выше)
+            if (frac > 1e-3f && frac < 0.999f) {
+                drawLine(NeonTheme.gridMinor, Offset(x, plotT), Offset(x, plotB), strokeWidth = 0.5f)
+            }
+            val txt = "%.${decimals}fs".format(Locale.ROOT, tSec)
+            when {
+                // Первая метка — влево от plotL (растёт вправо), иначе центрируется
+                // по краю и налезает на нижнюю метку оси Y.
+                frac < 0.03f -> drawText(txt, plotL, plotB + 14f)
+                frac > 0.97f -> drawText(txt, plotR, plotB + 14f, alignRight = true)
+                else -> drawText(txt, x, plotB + 14f, alignCenter = true)
+            }
+            k++
+        }
     }
 
     // 4. Per-series drawing (envelope → sigma → line → current point).
@@ -496,16 +582,19 @@ private fun DrawScope.drawNeonChart(
 
 private fun DrawScope.drawAxisLabelsY(
     ab: AxisBounds, xPx: Float, top: Float, bottom: Float,
-    divisions: Int, right: Boolean
+    divisions: Int, right: Boolean, unit: String? = null
 ) {
     for (i in 0..divisions) {
         val frac = i.toFloat() / divisions
         val v = ab.yMax - frac * ab.range
         val y = top + (bottom - top) * frac
+        // Единицу измерения вешаем только на верхнюю метку (i==0), чтобы не
+        // засорять каждое деление.
+        val label = if (i == 0 && unit != null) "${formatTick(v)} $unit" else formatTick(v)
         // Левая ось: метка ВПРАВО от xPx=PAD_LEFT-4, выровнена по правому
         // краю (текст растёт справа-налево). Правая ось: метка ВПРАВО от
         // xPx=plotR+4, выровнена по левому краю (текст растёт слева-направо).
-        drawText(formatTick(v), xPx, y + 3f, alignCenter = false, alignRight = !right)
+        drawText(label, xPx, y + 3f, alignCenter = false, alignRight = !right)
     }
 }
 
