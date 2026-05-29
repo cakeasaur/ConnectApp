@@ -351,7 +351,9 @@ private fun GraphScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.graph_title)) },
+                // Заголовок убран: рядом с панелью иконок он не помещался и
+                // переносился в столбик. Иконки и так понятны без подписи.
+                title = {},
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.btn_back))
@@ -619,7 +621,9 @@ private fun GraphScreen(
             // карточки. Не путать с цветами серий в Vico (FF3232 / 3264DC):
             // здесь они подобраны под dark BG для максимальной читаемости.
             val tempColors = listOf(Color(0xFFFF6B6B), Color(0xFF4FC3F7))
-            val accelColors = listOf(Color(0xFFFF5252), Color(0xFF69F0AE), Color(0xFF40C4FF))
+            // ax=красный, ay=янтарный, az=голубой. ay был зелёным — красный+зелёный
+            // сливаются для дальтоников (~8% мужчин), янтарный различим со всеми.
+            val accelColors = listOf(Color(0xFFFF5252), Color(0xFFFFD54F), Color(0xFF40C4FF))
 
             // Конфиги per chart. Thresholds — тематические:
             //   T > 28°C → перегрев
@@ -631,6 +635,7 @@ private fun GraphScreen(
                     NeonThreshold(28f, "overheat", Color(0xFFFFAA00))
                 ) else emptyList(),
                 phaseLock = phaseLock,
+                yUnitLeft = "°C",
             )
             val accelConfig = NeonChartConfig(
                 showEnvelope = showEnvelope,
@@ -639,6 +644,8 @@ private fun GraphScreen(
                     NeonThreshold(1100f, "vibration", Color(0xFFFF8800), NeonAxis.RIGHT)
                 ) else emptyList(),
                 phaseLock = phaseLock,
+                yUnitLeft = "LSB",
+                yUnitRight = "LSB",
             )
 
             // Текущие значения всех каналов крупными цифрами — сразу видно состояние
