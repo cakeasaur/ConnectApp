@@ -96,11 +96,12 @@ class StreamDecoderTest {
     }
 
     @Test
-    fun `flush strips trailing cr`() {
+    fun `lone cr acts as line delimiter`() {
         val decoder = LineDecoder()
         val bytes = "data\r".toByteArray(Charsets.UTF_8)
-        decoder.feed(bytes, bytes.size)
-        assertEquals("data", decoder.flush())
+        val lines = decoder.feed(bytes, bytes.size)
+        assertEquals(listOf("data"), lines)
+        assertNull(decoder.flush())
     }
 
     @Test
