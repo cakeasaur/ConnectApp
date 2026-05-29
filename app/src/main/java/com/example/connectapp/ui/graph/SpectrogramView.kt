@@ -82,10 +82,11 @@ fun SpectrogramCard(
     val lastT = series.last().t
     // Перерасчёт при изменении данных. Заполнение идемпотентно (одни и те
     // же данные → один результат), поэтому side-effect в remember безопасен
-    // даже при отмене composition. Возвращаемое значение нужно только для
-    // того чтобы блок реально перевыполнился по новому ключу.
-    remember(series.size, lastT) {
+    // даже при отмене composition. Возвращаем bitmap (не Unit) — lint
+    // RememberReturnType запрещает remember, возвращающий Unit.
+    val renderedBitmap = remember(series.size, lastT) {
         fillSpectrogramBitmap(bitmap, pixelBuf, series, freqBins)
+        bitmap
     }
 
     val nyquist = sampleRateHz / 2f
@@ -110,11 +111,11 @@ fun SpectrogramCard(
                     val w = size.width; val h = size.height
                     drawIntoCanvas { canvas: androidx.compose.ui.graphics.Canvas ->
                         val nativeCanvas: NativeCanvas = canvas.nativeCanvas
-                        val src = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
+                        val src = android.graphics.Rect(0, 0, renderedBitmap.width, renderedBitmap.height)
                         val dst = android.graphics.RectF(0f, 0f, w, h)
                         // FILTER_BITMAP_FLAG default = true (linear interpolation)
                         // даёт сглаженный водопад вместо квадратных пикселей.
-                        nativeCanvas.drawBitmap(bitmap, src, dst, null)
+                        nativeCanvas.drawBitmap(renderedBitmap, src, dst, null)
                     }
                     // Тонкая рамка
                     drawRect(

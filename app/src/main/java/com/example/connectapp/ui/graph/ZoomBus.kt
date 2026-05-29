@@ -53,10 +53,16 @@ class ZoomBus {
     fun applyTo(rawFirstT: Long, rawLastT: Long): Pair<Long, Long> {
         if (!isZoomed || rawFirstT >= rawLastT) return rawFirstT to rawLastT
         val rawRange = rawLastT - rawFirstT
-        val zoomedRange = (rawRange / scaleX).toLong().coerceAtLeast(500L)
+        // Math в Double: rawFirstT — current timestamp ms (~1.7e12), Float
+        // ULP при таком значении ~131000 ms (больше типичного окна зума).
+        // Если делать (rawFirstT + Float).toLong() — rawFirstT теряет точность
+        // при конверсии Long→Float, pan-жест перестаёт двигать окно.
+        // Считаем offset отдельно как Long и складываем с rawFirstT (Long+Long — exact).
+        val zoomedRange = (rawRange / scaleX.toDouble()).toLong().coerceAtLeast(500L)
         val maxOffset = (rawRange - zoomedRange).coerceAtLeast(0L)
-        val windowStart = (rawFirstT + maxOffset * offsetFraction).toLong()
-            .coerceIn(rawFirstT, rawFirstT + maxOffset)
+        val offsetMs = (maxOffset * offsetFraction.toDouble()).toLong()
+            .coerceIn(0L, maxOffset)
+        val windowStart = rawFirstT + offsetMs
         return windowStart to (windowStart + zoomedRange)
     }
 
