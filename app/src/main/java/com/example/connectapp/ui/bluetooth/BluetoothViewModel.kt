@@ -164,7 +164,9 @@ class BluetoothViewModel(
         // и пользователь подумает что это один непрерывный поток.
         SensorDataBus.clear()
         _sensorData.value = SensorData()
-        repo.connect(address, viewModelScope)
+        viewModelScope.launch {
+            repo.connect(address, viewModelScope)
+        }
         // Запоминаем в истории (имя из bonded или из аргумента, или сам MAC).
         val displayName = name
             ?: repo.devices.value.firstOrNull { it.address == address }?.name
