@@ -68,7 +68,6 @@
     <string name="hex_send_hint">HEX-байты через пробел (AA 55 01 FF)</string>
 
     <!-- Graphs -->
-    <string name="graph_title">Графики датчиков</string>
     <string name="graph_export_csv">CSV</string>
     <string name="graph_export_pdf">PDF-отчёт</string>
     <string name="graph_no_export_data">Нет данных для экспорта</string>
