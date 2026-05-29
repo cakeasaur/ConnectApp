@@ -146,7 +146,7 @@ class BluetoothRepository(
      * Reconnection is skipped if [disconnect] or [release] was called first.
      */
     @SuppressLint("MissingPermission")
-    fun connect(address: String, scope: CoroutineScope) {
+    suspend fun connect(address: String, scope: CoroutineScope) {
         val a = adapter ?: run {
             _state.value = ConnectionState.Error("Bluetooth not available")
             return
@@ -154,10 +154,19 @@ class BluetoothRepository(
         // Своё намерение для этой сессии — не делим shared boolean со старой,
         // которая могла ещё крутиться в reconnect-петле.
         val intent = DisconnectIntent()
+        currentIntent?.requested = true   // глушим старую reconnect-петлю
         currentIntent = intent
         stopDiscovery()
 
-        connectionJob?.cancel()
+        // Дожидаемся завершения старого job ДО старта новой сессии — иначе
+        // его finally дёрнет client.close() уже ПОСЛЕ того как новая сессия
+        // перезапишет client.socket, и закроет чужой сокет. Тот же класс бага,
+        // что починен в WifiRepository (см. коммент там).
+        connectionJob?.cancelAndJoin()
+        connectionJob = null
+        // На случай Error/Disconnected без disconnect() — сокет мог остаться открыт.
+        runCatching { client.close() }
+
         connectionJob = scope.launch {
             var attempt = 0
             var wasConnected = false
