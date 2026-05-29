@@ -62,7 +62,7 @@ object CrossCorrelation {
     /**
      * Индекс лага с максимальной корреляцией.
      * Возвращает (lag в отсчётах, значение корреляции).
-     * lag > 0 → сигнал y запаздывает от x на lag отсчётов.
+     * lag > 0 → сигнал y опережает x на lag отсчётов.
      */
     fun bestLag(corr: FloatArray, maxLag: Int): Pair<Int, Float> {
         if (corr.isEmpty()) return 0 to 0f

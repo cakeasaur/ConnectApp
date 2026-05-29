@@ -465,8 +465,8 @@ private fun CrossCorrCard(a1: List<TimedPoint>, a2: List<TimedPoint>, sampleRate
             fontFamily = FontFamily.Monospace
         )
         Text(
-            if (bestLag > 0) "ax2 отстаёт от ax1 на $bestLag отсчётов"
-            else if (bestLag < 0) "ax2 опережает ax1 на ${-bestLag} отсчётов"
+            if (bestLag > 0) "ax2 опережает ax1 на $bestLag отсчётов"
+            else if (bestLag < 0) "ax2 отстаёт от ax1 на ${-bestLag} отсчётов"
             else "сигналы синхронны",
             color = NeonTheme.textPrimary,
             style = MaterialTheme.typography.bodySmall,
