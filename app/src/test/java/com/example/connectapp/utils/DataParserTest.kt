@@ -223,4 +223,30 @@ class DataParserTest {
     fun `clock-like time string is not parsed as accel`() {
         assertNull(DataParser.parse("12:34:56"))
     }
+
+    @Test
+    fun `drainRecords frames newline-less semicolon stream by counter`() {
+        // Реальный формат платы: записи без '\n', разделены только ';'.
+        val sb = StringBuilder("11329;22.0;22.0;0,0,0;0,0,0;0.00;0.00;")
+        // Первая запись ещё не завершена — следующего счётчика нет.
+        assertEquals(0, DataParser.drainRecords(sb).size)
+        // Приходит следующая запись → предыдущая становится полной.
+        sb.append("11330;23.5;24.0;1,2,3;4,5,6;0.10;0.20;")
+        val recs = DataParser.drainRecords(sb)
+        assertEquals(1, recs.size)
+        val r = DataParser.parse(recs[0])
+        assertEquals(22.0f, r?.temperature1)
+        assertEquals(22.0f, r?.temperature2)
+        assertEquals(0f, r?.accel1X)
+        assertEquals(0f, r?.accel2Z)
+    }
+
+    @Test
+    fun `drainRecords still splits on newlines`() {
+        val sb = StringBuilder("28.5 29.1 0 0 0 1 2 3\nT:25.0\n")
+        val recs = DataParser.drainRecords(sb)
+        assertEquals(2, recs.size)
+        assertEquals(28.5f, DataParser.parse(recs[0])?.temperature1)
+        assertEquals(25.0f, DataParser.parse(recs[1])?.temperature1)
+    }
 }

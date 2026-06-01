@@ -154,17 +154,11 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
     private fun parseChunk(chunk: String) {
         // synchronized — parseChunk на Dispatchers.Default, clearLog на Main.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
-        synchronized(lineBuffer) { lineBuffer.append(normalised) }
-        var idx: Int
-        while (true) {
-            val line = synchronized(lineBuffer) {
-                idx = lineBuffer.indexOf('\n')
-                if (idx < 0) return@synchronized null
-                val s = lineBuffer.substring(0, idx).trim()
-                lineBuffer.delete(0, idx + 1)
-                s
-            } ?: break
-            if (line.isEmpty()) continue
+        val records = synchronized(lineBuffer) {
+            lineBuffer.append(normalised)
+            DataParser.drainRecords(lineBuffer)
+        }
+        for (line in records) {
             DataParser.parse(line)?.let { parsed ->
                 _sensorData.update { it.merge(parsed) }
                 parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
