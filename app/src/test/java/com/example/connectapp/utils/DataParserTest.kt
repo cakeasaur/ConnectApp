@@ -164,4 +164,63 @@ class DataParserTest {
         assertEquals(26.0f, r?.temperature2)
         assertEquals(4f, r?.accel2X)
     }
+
+    @Test
+    fun `csv with fractional accel values parses`() {
+        // Плата шлёт ускорение в g (дробные) — раньше regex требовал целые и падал.
+        val r = DataParser.parse("12;25.0;26.0;0.01,-0.02,1.00;0.03,0.04,0.98;")
+        assertNotNull(r)
+        assertEquals(25.0f, r!!.temperature1)
+        assertEquals(0.01f, r.accel1X)
+        assertEquals(-0.02f, r.accel1Y)
+        assertEquals(1.00f, r.accel1Z)
+        assertEquals(0.98f, r.accel2Z)
+    }
+
+    @Test
+    fun `csv with integer temperatures parses`() {
+        val r = DataParser.parse("7;29;30;0,0,0;1,2,3;")
+        assertEquals(29f, r?.temperature1)
+        assertEquals(30f, r?.temperature2)
+        assertEquals(1f, r?.accel2X)
+    }
+
+    @Test
+    fun `csv without leading counter parses`() {
+        val r = DataParser.parse("25.5;26.5;0,0,0;1,2,3")
+        assertEquals(25.5f, r?.temperature1)
+        assertEquals(26.5f, r?.temperature2)
+        assertEquals(3f, r?.accel2Z)
+    }
+
+    @Test
+    fun `accel-only triple parses into accel1`() {
+        val r = DataParser.parse("254,0,59")
+        assertNotNull(r)
+        assertEquals(254f, r!!.accel1X)
+        assertEquals(59f, r.accel1Z)
+        assertNull(r.temperature1)
+    }
+
+    @Test
+    fun `six values parse as two accelerometers`() {
+        val r = DataParser.parse("1 2 3 4 5 6")
+        assertEquals(1f, r?.accel1X)
+        assertEquals(3f, r?.accel1Z)
+        assertEquals(4f, r?.accel2X)
+        assertEquals(6f, r?.accel2Z)
+        assertNull(r?.temperature1)
+    }
+
+    @Test
+    fun `tab separated eight values parse`() {
+        val r = DataParser.parse("28.5\t29.1\t0\t0\t0\t1\t2\t3")
+        assertEquals(28.5f, r?.temperature1)
+        assertEquals(3f, r?.accel2Z)
+    }
+
+    @Test
+    fun `clock-like time string is not parsed as accel`() {
+        assertNull(DataParser.parse("12:34:56"))
+    }
 }
