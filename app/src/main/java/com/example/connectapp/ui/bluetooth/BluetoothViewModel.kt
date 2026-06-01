@@ -403,39 +403,30 @@ class BluetoothViewModel(
     private fun parseChunk(chunk: String) {
         // Нормализуем переводы строк: некоторые прошивки шлют только '\r'.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
-        synchronized(lineBuffer) {
+        val records = synchronized(lineBuffer) {
             lineBuffer.append(normalised)
+            DataParser.drainRecords(lineBuffer)
         }
-        var idx: Int
-        while (true) {
-            val line = synchronized(lineBuffer) {
-                idx = lineBuffer.indexOf('\n')
-                if (idx < 0) return@synchronized null
-                val s = lineBuffer.substring(0, idx).trim()
-                lineBuffer.delete(0, idx + 1)
-                s
-            } ?: break
-            if (line.isNotEmpty()) {
-                DataParser.parse(line)?.let { parsed ->
-                    _sensorData.update { it.merge(parsed) }
-                    parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
-                    parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
-                    if (parsed.accel1X != null || parsed.accel1Y != null || parsed.accel1Z != null) {
-                        SensorDataBus.addAccel(
-                            slot = 1,
-                            x = parsed.accel1X ?: 0f,
-                            y = parsed.accel1Y ?: 0f,
-                            z = parsed.accel1Z ?: 0f
-                        )
-                    }
-                    if (parsed.accel2X != null || parsed.accel2Y != null || parsed.accel2Z != null) {
-                        SensorDataBus.addAccel(
-                            slot = 2,
-                            x = parsed.accel2X ?: 0f,
-                            y = parsed.accel2Y ?: 0f,
-                            z = parsed.accel2Z ?: 0f
-                        )
-                    }
+        for (line in records) {
+            DataParser.parse(line)?.let { parsed ->
+                _sensorData.update { it.merge(parsed) }
+                parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
+                parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
+                if (parsed.accel1X != null || parsed.accel1Y != null || parsed.accel1Z != null) {
+                    SensorDataBus.addAccel(
+                        slot = 1,
+                        x = parsed.accel1X ?: 0f,
+                        y = parsed.accel1Y ?: 0f,
+                        z = parsed.accel1Z ?: 0f
+                    )
+                }
+                if (parsed.accel2X != null || parsed.accel2Y != null || parsed.accel2Z != null) {
+                    SensorDataBus.addAccel(
+                        slot = 2,
+                        x = parsed.accel2X ?: 0f,
+                        y = parsed.accel2Y ?: 0f,
+                        z = parsed.accel2Z ?: 0f
+                    )
                 }
             }
         }

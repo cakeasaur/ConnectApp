@@ -30,6 +30,64 @@ object DataParser {
     private val axisZ = Regex("""(?i)(?:^|[\s,;>|])a?z[:\s=]+(-?\d+(?:\.\d+)?)""")
     // Любое число со знаком и опциональной дробной частью (для плоского режима).
     private val numberRegex = Regex("""[-+]?\d*\.?\d+""")
+    // Поле-счётчик: чисто целое (без точки и запятых).
+    private val pureIntRegex = Regex("""^[+-]?\d+$""")
+
+    /**
+     * Выгребает из буфера [sb] завершённые записи, оставляя незавершённый хвост.
+     * Удаляет выданное из [sb].
+     *
+     * Поддерживает два кадрирования:
+     *   1. По '\n' — для прошивок с переводом строки.
+     *   2. По счётчику — прошивки шлют записи `counter;t1;t2;ax,ay,az;...;`
+     *      БЕЗ '\n', разделяя только ';'. Граница новой записи — чисто целое
+     *      поле (счётчик), встреченное после того как в текущей записи уже
+     *      была тройка акселерометра (через запятую). Это отличает счётчик от
+     *      целых температур, идущих до акселерометра. Последняя (возможно
+     *      неполная) запись остаётся в буфере до прихода следующего счётчика.
+     */
+    fun drainRecords(sb: StringBuilder): List<String> {
+        val out = ArrayList<String>()
+        while (true) {
+            val nl = sb.indexOf("\n")
+            if (nl < 0) break
+            val line = sb.substring(0, nl).trim()
+            sb.delete(0, nl + 1)
+            if (line.isNotEmpty()) out.add(line)
+        }
+        if (sb.indexOf(";") < 0) return out
+
+        val s = sb.toString()
+        var recordStart = -1
+        var sawTriple = false
+        var fieldStart = 0
+        while (fieldStart <= s.length) {
+            val sep = s.indexOf(';', fieldStart)
+            val end = if (sep < 0) s.length else sep
+            val tok = s.substring(fieldStart, end).trim()
+            if (tok.isNotEmpty()) {
+                val isInt = pureIntRegex.matches(tok)
+                val isTriple = tok.indexOf(',') >= 0
+                if (recordStart < 0) {
+                    if (isInt) { recordStart = fieldStart; sawTriple = false }
+                } else if (isInt && sawTriple) {
+                    out.add(s.substring(recordStart, fieldStart).trim().trimEnd(';'))
+                    recordStart = fieldStart
+                    sawTriple = false
+                }
+                if (recordStart >= 0 && isTriple) sawTriple = true
+            }
+            if (sep < 0) break
+            fieldStart = sep + 1
+        }
+        when {
+            recordStart > 0 -> sb.delete(0, recordStart)
+            // Нет ни одного счётчика, а буфер растёт — это мусор/текст без
+            // кадрирования, сбрасываем, чтобы не утекать памятью.
+            recordStart < 0 && sb.length > 8192 -> sb.setLength(0)
+        }
+        return out
+    }
 
     fun parse(line: String): SensorData? {
         val raw = line.trim()
