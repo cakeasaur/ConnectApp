@@ -313,72 +313,76 @@ private fun BluetoothScreen(
 
             SensorPanel(data = sensor)
 
-            // Поиск + список устройств
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            stringResource(R.string.label_devices),
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilledTonalButton(
-                            onClick = {
-                                if (!PermissionHelper.hasAll(ctx, PermissionHelper.bluetoothPermissions())) {
-                                    permissionLauncher.launch(PermissionHelper.bluetoothPermissions())
-                                } else if (viewModel.isEnabled()) {
-                                    if (scanning) viewModel.stopDiscovery() else viewModel.startDiscovery()
+            // Поиск устройств и история нужны только пока НЕ подключены.
+            // При активном соединении скрываем их — освобождается ~250dp,
+            // которые забирает лог (он на weight(1f)).
+            if (!connected) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                stringResource(R.string.label_devices),
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilledTonalButton(
+                                onClick = {
+                                    if (!PermissionHelper.hasAll(ctx, PermissionHelper.bluetoothPermissions())) {
+                                        permissionLauncher.launch(PermissionHelper.bluetoothPermissions())
+                                    } else if (viewModel.isEnabled()) {
+                                        if (scanning) viewModel.stopDiscovery() else viewModel.startDiscovery()
+                                    } else {
+                                        ensureBluetoothEnabled()
+                                    }
+                                }
+                            ) {
+                                if (scanning) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(stringResource(R.string.btn_stop))
                                 } else {
-                                    ensureBluetoothEnabled()
+                                    Icon(Icons.AutoMirrored.Filled.BluetoothSearching, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(stringResource(R.string.btn_scan))
                                 }
                             }
-                        ) {
-                            if (scanning) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(stringResource(R.string.btn_stop))
-                            } else {
-                                Icon(Icons.AutoMirrored.Filled.BluetoothSearching, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text(stringResource(R.string.btn_scan))
-                            }
                         }
+                        Text(
+                            stringResource(R.string.hint_pin),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        DeviceList(
+                            devices = devices,
+                            onClick = { viewModel.connect(it.address, it.name) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 60.dp, max = 220.dp)
+                        )
                     }
-                    Text(
-                        stringResource(R.string.hint_pin),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    DeviceList(
-                        devices = devices,
-                        onClick = { viewModel.connect(it.address, it.name) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 60.dp, max = 220.dp)
+                }
+
+                // История подключений — компактный ряд chip'ов с последними 5 устройствами.
+                if (history.isNotEmpty()) {
+                    HistoryRow(
+                        items = history,
+                        onSelect = { viewModel.connect(it.address, it.name) },
+                        onClear = { viewModel.clearHistory() }
                     )
                 }
-            }
-
-            // История подключений — компактный ряд chip'ов с последними 5 устройствами.
-            if (history.isNotEmpty()) {
-                HistoryRow(
-                    items = history,
-                    onSelect = { viewModel.connect(it.address, it.name) },
-                    onClear = { viewModel.clearHistory() }
-                )
             }
 
             // Чипы кастомных команд — readonly view, редактируется в Настройках.
