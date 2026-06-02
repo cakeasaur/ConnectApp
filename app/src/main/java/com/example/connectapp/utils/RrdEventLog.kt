@@ -3,6 +3,7 @@ package com.example.connectapp.utils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 /** Одна запись журнала событий RRD платы. Числовые поля держим строками —
  *  формат реальной платы пока зафиксирован одним примером, не теряем сырьё. */
@@ -24,7 +25,82 @@ data class RrdDump(
     val totalEntries: Int?,
     /** Когда дамп снят (часы устройства, epoch ms). 0 = не штампован. */
     val capturedAt: Long = 0L,
+    /** Сырьё блока ровно как пришло с платы (для режима «Сырьё» и реэкспорта). */
+    val rawText: String = "",
 )
+
+/**
+ * Событие, схлопнутое из пары S(start)/E(end) одного имени в один интервал.
+ * [durationSec] считается по меткам времени; [durRaw] — поле Dur платы как есть.
+ */
+data class RrdInterval(
+    val event: String,
+    val startIdx: Int,
+    val endIdx: Int?,
+    val startTime: String,
+    val endTime: String?,
+    val durationSec: Long?,
+    val durRaw: String,
+    val cur: String,
+    val min: String,
+    val max: String,
+    val unit: String,
+    val ongoing: Boolean,
+)
+
+private val rrdDateFmt = java.text.SimpleDateFormat("dd.MM.yy HH:mm:ss", java.util.Locale.ROOT)
+
+private fun rrdDurationSec(start: String, end: String?): Long? {
+    if (end.isNullOrBlank() || start.isBlank()) return null
+    return try {
+        val s = rrdDateFmt.parse(start) ?: return null
+        val e = rrdDateFmt.parse(end) ?: return null
+        (e.time - s.time) / 1000
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun intervalOf(start: RrdEvent, end: RrdEvent?): RrdInterval {
+    val measure = end ?: start
+    return RrdInterval(
+        event = start.event,
+        startIdx = start.idx,
+        endIdx = end?.idx,
+        startTime = start.dateTime,
+        endTime = end?.dateTime,
+        durationSec = rrdDurationSec(start.dateTime, end?.dateTime),
+        durRaw = measure.dur,
+        cur = measure.cur, min = measure.min, max = measure.max, unit = measure.unit,
+        ongoing = end == null && start.marker.equals("S", ignoreCase = true),
+    )
+}
+
+/**
+ * Схлопывает плоский список событий в интервалы: пара S+E одного имени → один
+ * интервал с длительностью. Непарный S → ongoing-интервал; одинокий E или
+ * прочий маркер — как самостоятельная запись. Порядок — по стартовому idx.
+ */
+fun pairRrdEvents(events: List<RrdEvent>): List<RrdInterval> {
+    val out = ArrayList<RrdInterval>()
+    val openByEvent = LinkedHashMap<String, RrdEvent>()
+    for (e in events) {
+        when {
+            e.marker.equals("S", ignoreCase = true) -> {
+                openByEvent.remove(e.event)?.let { out.add(intervalOf(it, null)) }
+                openByEvent[e.event] = e
+            }
+            e.marker.equals("E", ignoreCase = true) -> {
+                val s = openByEvent.remove(e.event)
+                out.add(if (s != null) intervalOf(s, e) else intervalOf(e, null))
+            }
+            else -> out.add(intervalOf(e, null))
+        }
+    }
+    for (s in openByEvent.values) out.add(intervalOf(s, null))
+    out.sortBy { it.startIdx }
+    return out
+}
 
 /**
  * Парсер блока `=== RRD Event Log ===` из вывода команды `log dump`.
@@ -109,9 +185,21 @@ object RrdLog {
     private val lock = Any()
     private val buf = StringBuilder()
     private var capturing = false
+    private var persistFile: File? = null
 
     private val _dump = MutableStateFlow<RrdDump?>(null)
     val dump: StateFlow<RrdDump?> = _dump.asStateFlow()
+
+    /**
+     * Привязывает файл персиста и восстанавливает последний дамп с диска, чтобы
+     * журнал пережил перезапуск процесса. Вызывать один раз из Application.
+     */
+    fun init(file: File) {
+        synchronized(lock) {
+            persistFile = file
+            if (_dump.value == null) loadFromDisk(file)
+        }
+    }
 
     /**
      * Скармливает СЫРОЙ чанк потока (плата шлёт каждую строку дампа отдельным
@@ -130,8 +218,12 @@ object RrdLog {
             when {
                 t.contains("Total entries", ignoreCase = true) -> {
                     capturing = false
-                    val parsed = RrdEventLogParser.parse(buf.toString())
-                    parsed?.let { _dump.value = it.copy(capturedAt = System.currentTimeMillis()) }
+                    val raw = buf.toString()
+                    RrdEventLogParser.parse(raw)?.let {
+                        val d = it.copy(capturedAt = System.currentTimeMillis(), rawText = raw)
+                        _dump.value = d
+                        saveToDisk(d)
+                    }
                     buf.setLength(0)
                 }
                 buf.length > MAX_BUF -> {        // незавершённый дамп — сброс
@@ -147,6 +239,27 @@ object RrdLog {
             capturing = false
             buf.setLength(0)
             _dump.value = null
+            persistFile?.let { runCatching { it.delete() } }
+        }
+    }
+
+    /** Формат файла: первая строка — capturedAt (epoch ms), остальное — сырьё. */
+    private fun saveToDisk(d: RrdDump) {
+        val f = persistFile ?: return
+        runCatching { f.writeText("${d.capturedAt}\n${d.rawText}") }
+    }
+
+    private fun loadFromDisk(f: File) {
+        if (!f.exists()) return
+        runCatching {
+            val content = f.readText()
+            val nl = content.indexOf('\n')
+            if (nl < 0) return@runCatching
+            val capturedAt = content.substring(0, nl).trim().toLongOrNull() ?: 0L
+            val raw = content.substring(nl + 1)
+            RrdEventLogParser.parse(raw)?.let {
+                _dump.value = it.copy(capturedAt = capturedAt, rawText = raw)
+            }
         }
     }
 }
