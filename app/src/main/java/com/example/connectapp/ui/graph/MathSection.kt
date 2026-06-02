@@ -151,7 +151,10 @@ private fun FftCard(series: List<TimedPoint>, sampleRateHz: Float) {
     }
     var logScale by remember { mutableStateOf(false) }
 
-    val winSize = min(series.size, 256)
+    // Берём окно сразу степенью двойки и его ХВОСТ (новейшие сэмплы). Иначе
+    // amplitudeSpectrum усекает вход до nearestPow2Down изнутри, отбрасывая
+    // самые свежие отсчёты, и спектр отстаёт от реального времени.
+    val winSize = nearestPow2Down(min(series.size, 256))
     val lastT = series.last().t
     val spectrum = remember(series.size, lastT) {
         val arr = FloatArray(winSize)
@@ -159,7 +162,7 @@ private fun FftCard(series: List<TimedPoint>, sampleRateHz: Float) {
         for (i in 0 until winSize) arr[i] = series[from + i].value
         Fft.amplitudeSpectrum(arr)
     }
-    val fftSize = nearestPow2Down(winSize)
+    val fftSize = winSize
     val nyquist = sampleRateHz / 2f
 
     var peakBin = 1
@@ -344,17 +347,34 @@ private fun VibrationStatsCard(label: String, series: List<TimedPoint>) {
 // Tilt — пузырьковый уровень
 // ============================================================
 
+/** Окно усреднения наклона (~1 с при 10–20 Гц) для подавления вибрации. */
+private const val TILT_AVG_SAMPLES = 12
+
+/** Среднее последних [n] значений ряда. Предполагается n in 1..list.size. */
+private fun meanTail(list: List<TimedPoint>, n: Int): Float {
+    var s = 0.0
+    for (i in (list.size - n) until list.size) s += list[i].value
+    return (s / n).toFloat()
+}
+
 @Composable
 private fun TiltCard(ax: List<TimedPoint>, ay: List<TimedPoint>, az: List<TimedPoint>) {
     // Если данных нет — НЕ фабрикуем фейковую ориентацию (0,0,1000 = "горизонт"),
     // иначе пользователь видит ровный пузырёк и думает, что плата лежит. Лучше
     // явно сказать "жду данные".
-    val axV = ax.lastOrNull()?.value
-    val ayV = ay.lastOrNull()?.value
-    val azV = az.lastOrNull()?.value
-    if (axV == null || ayV == null || azV == null) {
+    val n = minOf(ax.size, ay.size, az.size)
+    if (n == 0) {
         EmptyCard("Жду показаний акселерометра A1…")
         return
+    }
+    // Усредняем хвост окна вместо одного мгновенного отсчёта: формула наклона
+    // верна только в покое, а сырой сэмпл трясёт вибрация/линейное ускорение.
+    // Среднее по вектору — низкочастотная оценка гравитации (нулевое-среднее
+    // колебание гасится, постоянная гравитация остаётся).
+    val lastT = az[n - 1].t
+    val (axV, ayV, azV) = remember(n, lastT) {
+        val w = minOf(n, TILT_AVG_SAMPLES)
+        Triple(meanTail(ax, w), meanTail(ay, w), meanTail(az, w))
     }
     val pitch = Orientation.pitchDeg(axV, ayV, azV)
     val roll = Orientation.rollDeg(axV, ayV, azV)

@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 
 /**
  * Запись о срабатывании порогового алерта. Накапливается в [AlertEngine.events].
@@ -129,12 +130,19 @@ object AlertEngine {
 
     private fun check(context: Context, key: String, label: String, value: Float) {
         val max = _thresholds.value[key] ?: return
-        if (value <= max) return
+        // Оси акселерометра колеблются вокруг нуля — для них важен модуль
+        // выброса (вибрация в обе стороны), иначе отрицательная половина
+        // каждого колебания не алертит. Температура остаётся знаковой.
+        val measured = if (isAccelKey(key)) abs(value) else value
+        if (measured <= max) return
         val now = System.currentTimeMillis()
         if (now - (lastNotifTime[key] ?: 0L) < COOLDOWN_MS) return
         lastNotifTime[key] = now
-        fire(context, key, label, value, max)
+        fire(context, key, label, measured, max)
     }
+
+    /** Ключи акселерометра: ax1/ay1/az1/ax2/ay2/az2. Температуры — t1/t2. */
+    private fun isAccelKey(key: String): Boolean = key.startsWith("a")
 
     private fun fire(
         context: Context,
