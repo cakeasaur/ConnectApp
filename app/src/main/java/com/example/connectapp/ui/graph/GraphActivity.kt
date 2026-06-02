@@ -38,8 +38,11 @@ import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material.icons.filled.ZoomOutMap
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -64,6 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -337,6 +341,7 @@ private fun GraphScreen(
     val crosshair = remember { CrosshairBus() }
     val zoom = remember { ZoomBus() }
     var showAlertDialog by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
 
     // 1) Freeze: при paused = true возвращаем снимок, снятый в момент перехода.
     val temp1Snap = snapshotWhen(paused, temp1Live)
@@ -362,7 +367,13 @@ private fun GraphScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.graph_title)) },
+                title = {
+                    Text(
+                        stringResource(R.string.graph_title),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.btn_back))
@@ -390,7 +401,7 @@ private fun GraphScreen(
                                    else MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    // Clear cursors — отдельная кнопка для очевидности, рядом с режимом.
+                    // Clear cursors — появляется только когда курсор активен.
                     if (crosshair.selectedT != null || crosshair.secondT != null) {
                         IconButton(onClick = { crosshair.clear() }) {
                             Icon(
@@ -399,37 +410,6 @@ private fun GraphScreen(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    }
-                    // Скриншот экрана графиков — быстрый шеринг того что видишь.
-                    IconButton(onClick = onScreenshot) {
-                        Icon(Icons.Filled.CameraAlt, contentDescription = "Скриншот")
-                    }
-                    // Алерты — колокол подсвечивается если есть активные пороги.
-                    IconButton(onClick = { showAlertDialog = true }) {
-                        Icon(
-                            Icons.Filled.NotificationsActive,
-                            contentDescription = "Настроить алерты"
-                        )
-                    }
-                    // Журнал аномалий — открывает Activity со списком срабатываний.
-                    val ctx = androidx.compose.ui.platform.LocalContext.current
-                    IconButton(onClick = {
-                        ctx.startActivity(
-                            android.content.Intent(ctx, com.example.connectapp.ui.anomaly.AnomalyLogActivity::class.java)
-                        )
-                    }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ListAlt,
-                            contentDescription = "Журнал аномалий"
-                        )
-                    }
-                    // Журнал событий RRD (вывод `log dump`).
-                    IconButton(onClick = {
-                        ctx.startActivity(
-                            android.content.Intent(ctx, com.example.connectapp.ui.rrd.RrdEventLogActivity::class.java)
-                        )
-                    }) {
-                        Icon(Icons.Filled.Storage, contentDescription = "Журнал событий (RRD)")
                     }
                     // Сброс pinch-zoom — появляется только когда активен зум.
                     if (zoom.isZoomed) {
@@ -441,8 +421,7 @@ private fun GraphScreen(
                             )
                         }
                     }
-                    // Pause — заморозить графики и stats на текущем кадре, чтобы
-                    // успеть прочитать значения, пока поток идёт. Снежинка → нажата.
+                    // Pause — частое действие, оставляем видимым.
                     IconButton(onClick = { paused = !paused }) {
                         Icon(
                             Icons.Filled.AcUnit,
@@ -453,14 +432,53 @@ private fun GraphScreen(
                                    else MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    IconButton(onClick = onExportPdf) {
-                        Icon(
-                            Icons.Filled.PictureAsPdf,
-                            contentDescription = stringResource(R.string.graph_export_pdf)
-                        )
-                    }
-                    IconButton(onClick = onExport) {
-                        Icon(Icons.Filled.FileDownload, contentDescription = stringResource(R.string.graph_export_csv))
+                    // Остальное — в overflow-меню, чтобы заголовок не зажимался.
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Ещё")
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Журнал событий (RRD)") },
+                                leadingIcon = { Icon(Icons.Filled.Storage, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    context.startActivity(
+                                        android.content.Intent(context, com.example.connectapp.ui.rrd.RrdEventLogActivity::class.java)
+                                    )
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Журнал аномалий") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ListAlt, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    context.startActivity(
+                                        android.content.Intent(context, com.example.connectapp.ui.anomaly.AnomalyLogActivity::class.java)
+                                    )
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Настроить алерты") },
+                                leadingIcon = { Icon(Icons.Filled.NotificationsActive, contentDescription = null) },
+                                onClick = { menuOpen = false; showAlertDialog = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.graph_export_pdf)) },
+                                leadingIcon = { Icon(Icons.Filled.PictureAsPdf, contentDescription = null) },
+                                onClick = { menuOpen = false; onExportPdf() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.graph_export_csv)) },
+                                leadingIcon = { Icon(Icons.Filled.FileDownload, contentDescription = null) },
+                                onClick = { menuOpen = false; onExport() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Скриншот") },
+                                leadingIcon = { Icon(Icons.Filled.CameraAlt, contentDescription = null) },
+                                onClick = { menuOpen = false; onScreenshot() }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -509,15 +527,39 @@ private fun GraphScreen(
             val cmdQuick = stringResource(R.string.cmd_three)
             val cmdDump = stringResource(R.string.cmd_log_dump)
             val scope = rememberCoroutineScope()
+            // Основное действие — monitor/stop — на всю ширину сверху, акцентом.
+            // Три служебные команды — равным рядом снизу. Раньше все 4 жались в
+            // один ряд и «monitor» переносился по буквам вертикально.
+            Button(
+                onClick = {
+                    // Старт — словом `monitor`; стоп — ESC (этой плате поток
+                    // обрывает только ESC, повторная команда не останавливает).
+                    if (monitoring) CommandBus.send("\u001B", transport)
+                    else CommandBus.send(cmdStart, transport)
+                    monitoring = !monitoring
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                Icon(
+                    imageVector = if (monitoring) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                    contentDescription = null
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (monitoring) "Стоп" else "Мониторинг",
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
                     onClick = { CommandBus.send(cmdCalib, transport) },
                     modifier = Modifier.weight(1f)
-                ) { Text("calib") }
+                ) { Text("calib", maxLines = 1, softWrap = false) }
                 FilledTonalButton(
                     onClick = { CommandBus.send(cmdQuick, transport) },
                     modifier = Modifier.weight(1f)
-                ) { Text("test") }
+                ) { Text("test", maxLines = 1, softWrap = false) }
                 FilledTonalButton(
                     onClick = {
                         // ESC прерывает мониторинг → ждём промпт → шлём `log dump`.
@@ -530,24 +572,7 @@ private fun GraphScreen(
                         }
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text("dump") }
-                Button(
-                    onClick = {
-                        // Старт — словом `monitor`; стоп — ESC (этой плате поток
-                        // обрывает только ESC, повторная команда не останавливает).
-                        if (monitoring) CommandBus.send("\u001B", transport)
-                        else CommandBus.send(cmdStart, transport)
-                        monitoring = !monitoring
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = if (monitoring) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-                        contentDescription = null
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (monitoring) "stop" else "monitor")
-                }
+                ) { Text("dump", maxLines = 1, softWrap = false) }
             }
 
             // Zoom-bar — непрерывный контроль окна вместо 4 пресетов.
