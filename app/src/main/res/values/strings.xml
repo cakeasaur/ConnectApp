@@ -112,9 +112,9 @@
     <!-- Boot-меню PIC24 1/2/3 — используются на экране Графиков (auto-monitor,
          calibrate, quick test). UART-menu команды (echo/help/clear/freq/test)
          теперь редактируются в Настройках через QuickCommandsDialog. -->
-    <string name="cmd_one" translatable="false">1</string>
-    <string name="cmd_two" translatable="false">2</string>
-    <string name="cmd_three" translatable="false">3</string>
+    <string name="cmd_one" translatable="false">monitor</string>
+    <string name="cmd_two" translatable="false">calib</string>
+    <string name="cmd_three" translatable="false">quick test</string>
 
     <!-- История записей -->
     <string name="history_title">Записанные сессии</string>
