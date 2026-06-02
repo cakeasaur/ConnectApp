@@ -96,8 +96,9 @@ object RrdEventLogParser {
 
 /**
  * Хранилище последнего распарсенного RRD-дампа. Авто-детект: [feedLine]
- * получает текстовые строки потока, ловит блок от «RRD Event Log» до
- * «Total entries», парсит и публикует в [dump]. Экран наблюдает [dump].
+ * получает СЫРЫЕ чанки потока (плата шлёт каждую строку дампа отдельным
+ * чанком без `\n`), ловит блок от «RRD Event Log» до «Total entries»,
+ * парсит и публикует в [dump]. Экран наблюдает [dump].
  */
 object RrdLog {
 
@@ -110,21 +111,25 @@ object RrdLog {
     private val _dump = MutableStateFlow<RrdDump?>(null)
     val dump: StateFlow<RrdDump?> = _dump.asStateFlow()
 
+    /**
+     * Скармливает СЫРОЙ чанк потока (плата шлёт каждую строку дампа отдельным
+     * чанком без `\n`, поэтому line-framing их не выделяет — берём сырьё).
+     */
     fun feedLine(line: String) {
         synchronized(lock) {
-            val t = stripAnsi(line).trim()
+            val clean = stripAnsi(line)
+            val t = clean.trim()
             if (t.contains("RRD Event Log", ignoreCase = true)) {
                 capturing = true
                 buf.setLength(0)
-                buf.append(line).append('\n')
-                return
             }
             if (!capturing) return
-            buf.append(line).append('\n')
+            buf.append(clean).append('\n')
             when {
-                t.startsWith("Total", ignoreCase = true) -> {
+                t.contains("Total entries", ignoreCase = true) -> {
                     capturing = false
-                    RrdEventLogParser.parse(buf.toString())?.let { _dump.value = it }
+                    val parsed = RrdEventLogParser.parse(buf.toString())
+                    parsed?.let { _dump.value = it }
                     buf.setLength(0)
                 }
                 buf.length > MAX_BUF -> {        // незавершённый дамп — сброс

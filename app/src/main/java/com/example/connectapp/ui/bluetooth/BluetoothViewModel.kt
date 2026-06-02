@@ -415,6 +415,7 @@ class BluetoothViewModel(
      * а этот метод бежит на Dispatchers.Default. StringBuilder не thread-safe.
      */
     private fun parseChunk(chunk: String) {
+        com.example.connectapp.utils.RrdLog.feedLine(chunk)
         // Нормализуем переводы строк: некоторые прошивки шлют только '\r'.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
         val records = synchronized(lineBuffer) {
@@ -426,7 +427,6 @@ class BluetoothViewModel(
             if (parsed == null) {
                 // Не телеметрия — текстовый ответ (help/меню/статус). В отдельный лог.
                 CommandLog.appendIfText(line)
-                com.example.connectapp.utils.RrdLog.feedLine(line)
                 continue
             }
             val merged = _sensorData.updateAndGet { it.merge(parsed) }

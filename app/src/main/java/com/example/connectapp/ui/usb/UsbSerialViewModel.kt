@@ -153,6 +153,7 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch { settingsRepo.setLineEnding(value) }
 
     private fun parseChunk(chunk: String) {
+        com.example.connectapp.utils.RrdLog.feedLine(chunk)
         // synchronized — parseChunk на Dispatchers.Default, clearLog на Main.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
         val records = synchronized(lineBuffer) {
@@ -163,7 +164,6 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
             val parsed = DataParser.parse(line)
             if (parsed == null) {
                 CommandLog.appendIfText(line)
-                com.example.connectapp.utils.RrdLog.feedLine(line)
                 continue
             }
             val merged = _sensorData.updateAndGet { it.merge(parsed) }

@@ -49,6 +49,28 @@ class RrdEventLogParserTest {
     }
 
     @Test
+    fun `RrdLog assembles dump fed chunk-by-chunk without newlines`() {
+        // Реальная плата шлёт каждую строку дампа отдельным чанком без '\n'.
+        RrdLog.clear()
+        listOf(
+            "=== RRD Event Log ===",
+            "Idx | Date/Time         | Event   | S | Cur | Min | Max | Unit | Dur",
+            "----+-------------------+---------+---+-----+-----+-----+------+----",
+            "0   | 01.06.26 14:32:10 | A1 Stat | S | 28  | 28  | 28  | LSB  | 0",
+            "1   | 01.06.26 14:32:11 | A1 Stat | E | 28  | 28  | 28  | LSB  | 1",
+            "----+-------------------+---------+---+-----+-----+-----+------+----",
+            "Total entries: 2",
+        ).forEach { RrdLog.feedLine(it) }
+
+        val dump = RrdLog.dump.value
+        assertNotNull(dump)
+        assertEquals(2, dump!!.events.size)
+        assertEquals("A1 Stat", dump.events[0].event)
+        assertEquals("E", dump.events[1].marker)
+        RrdLog.clear()
+    }
+
+    @Test
     fun `strips ansi codes before parsing`() {
         val withAnsi =
             "\u001B[2J=== RRD Event Log ===\n" +

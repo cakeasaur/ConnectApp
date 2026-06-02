@@ -92,6 +92,7 @@ class TestViewModel(
     }
 
     private fun parseChunk(chunk: String) {
+        com.example.connectapp.utils.RrdLog.feedLine(chunk)
         // synchronized — parseChunk бежит на Dispatchers.Default, а clearLog
         // с Main. StringBuilder не thread-safe.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
@@ -103,7 +104,6 @@ class TestViewModel(
             val parsed = DataParser.parse(line)
             if (parsed == null) {
                 CommandLog.appendIfText(line)
-                com.example.connectapp.utils.RrdLog.feedLine(line)
                 continue
             }
             val merged = _sensorData.updateAndGet { it.merge(parsed) }
