@@ -242,6 +242,15 @@ class DataParserTest {
     }
 
     @Test
+    fun `drainRecords caps buffer on long unframed text`() {
+        // Текст без '\n' и ';' (вывод команд) не должен копиться бесконечно.
+        val sb = StringBuilder()
+        repeat(1000) { sb.append("status - Show system status   ") } // ~30k, нет '\n'/';'
+        DataParser.drainRecords(sb)
+        org.junit.Assert.assertTrue("буфер должен быть обрезан", sb.length < 1024)
+    }
+
+    @Test
     fun `drainRecords still splits on newlines`() {
         val sb = StringBuilder("28.5 29.1 0 0 0 1 2 3\nT:25.0\n")
         val recs = DataParser.drainRecords(sb)

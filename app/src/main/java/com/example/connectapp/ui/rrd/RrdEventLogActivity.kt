@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -86,7 +86,7 @@ class RrdEventLogActivity : ComponentActivity() {
             w.write("idx,datetime,event,marker,cur,min,max,unit,dur\n")
             for (e in events) {
                 w.write(
-                    "${e.idx},${csv(e.dateTime)},${csv(e.event)},${e.marker}," +
+                    "${e.idx},${csv(e.dateTime)},${csv(e.event)},${csv(e.marker)}," +
                         "${csv(e.cur)},${csv(e.min)},${csv(e.max)},${csv(e.unit)},${csv(e.dur)}\n"
                 )
             }
@@ -114,36 +114,39 @@ class RrdEventLogActivity : ComponentActivity() {
         )
 
         val pdf = PdfDocument()
-        var pageNo = 1
-        var page = pdf.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageNo).create())
-        var c = page.canvas
-        c.drawText("Журнал событий RRD", margin, 50f, title)
-        c.drawText(
-            "Снято: ${capturedText(dump?.capturedAt)} · записей: ${events.size}",
-            margin, 72f, small
-        )
-        c.drawText(header, margin, 100f, mono)
-        var y = 116f
-        for (e in events) {
-            if (y > pageH - margin) {
-                pdf.finishPage(page)
-                pageNo++
-                page = pdf.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageNo).create())
-                c = page.canvas
-                c.drawText(header, margin, 50f, mono)
-                y = 66f
-            }
-            val row = String.format(
-                rowFmt, e.idx.toString(), trunc(e.dateTime, 19), trunc(e.event, 12),
-                e.marker, trunc(e.cur, 6), trunc(e.min, 6), trunc(e.max, 6),
-                trunc(e.unit, 5), trunc(e.dur, 4)
+        try {
+            var pageNo = 1
+            var page = pdf.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageNo).create())
+            var c = page.canvas
+            c.drawText("Журнал событий RRD", margin, 50f, title)
+            c.drawText(
+                "Снято: ${capturedText(dump?.capturedAt)} · записей: ${events.size}",
+                margin, 72f, small
             )
-            c.drawText(row, margin, y, mono)
-            y += 13f
+            c.drawText(header, margin, 100f, mono)
+            var y = 116f
+            for (e in events) {
+                if (y > pageH - margin) {
+                    pdf.finishPage(page)
+                    pageNo++
+                    page = pdf.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageNo).create())
+                    c = page.canvas
+                    c.drawText(header, margin, 50f, mono)
+                    y = 66f
+                }
+                val row = String.format(
+                    rowFmt, e.idx.toString(), trunc(e.dateTime, 19), trunc(e.event, 12),
+                    e.marker, trunc(e.cur, 6), trunc(e.min, 6), trunc(e.max, 6),
+                    trunc(e.unit, 5), trunc(e.dur, 4)
+                )
+                c.drawText(row, margin, y, mono)
+                y += 13f
+            }
+            pdf.finishPage(page)
+            file.outputStream().use { pdf.writeTo(it) }
+        } finally {
+            pdf.close()
         }
-        pdf.finishPage(page)
-        file.outputStream().use { pdf.writeTo(it) }
-        pdf.close()
         share(file, "application/pdf", "Экспорт журнала событий (PDF)")
     }
 
@@ -238,7 +241,9 @@ private fun RrdEventLogScreen(onBack: () -> Unit, onExportCsv: () -> Unit, onExp
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        items(events, key = { it.idx }) { RrdRow(it) }
+                        // Ключ по позиции, а не по idx — плата может прислать
+                        // повторяющиеся idx, и key={it.idx} уронил бы LazyColumn.
+                        itemsIndexed(events) { _, e -> RrdRow(e) }
                     }
                 }
             }

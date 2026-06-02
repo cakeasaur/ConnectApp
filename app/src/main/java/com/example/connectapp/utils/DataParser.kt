@@ -33,6 +33,10 @@ object DataParser {
     // Поле-счётчик: чисто целое (без точки и запятых).
     private val pureIntRegex = Regex("""^[+-]?\d+$""")
 
+    // Защита от неограниченного роста lineBuffer, если поток не кадрируется
+    // (например, длинный текст команд без '\n'/';').
+    private const val MAX_BUFFER = 16_384
+
     /**
      * Выгребает из буфера [sb] завершённые записи, оставляя незавершённый хвост.
      * Удаляет выданное из [sb].
@@ -55,7 +59,14 @@ object DataParser {
             sb.delete(0, nl + 1)
             if (line.isNotEmpty()) out.add(line)
         }
-        if (sb.indexOf(";") < 0) return out
+        if (sb.indexOf(";") < 0) {
+            // Нет ни '\n', ни ';' — это текст команд (help/dump), который не
+            // кадрируется. RRD-дамп ловит RrdLog из сырья отдельно, так что
+            // здесь можно не копить: режем, оставляя небольшой хвост на случай
+            // незавершённой строки.
+            if (sb.length > MAX_BUFFER) sb.delete(0, sb.length - 256)
+            return out
+        }
 
         val s = sb.toString()
         var recordStart = -1
@@ -82,9 +93,10 @@ object DataParser {
         }
         when {
             recordStart > 0 -> sb.delete(0, recordStart)
-            // Нет ни одного счётчика, а буфер растёт — это мусор/текст без
-            // кадрирования, сбрасываем, чтобы не утекать памятью.
-            recordStart < 0 && sb.length > 8192 -> sb.setLength(0)
+            // recordStart <= 0: полного кадра нет (нет счётчика, либо единственная
+            // незавершённая запись с позиции 0). Если буфер раздулся — сбрасываем,
+            // чтобы не утекать памятью.
+            sb.length > MAX_BUFFER -> sb.setLength(0)
         }
         return out
     }
