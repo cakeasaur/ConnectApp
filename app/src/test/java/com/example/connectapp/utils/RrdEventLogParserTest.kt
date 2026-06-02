@@ -71,6 +71,49 @@ class RrdEventLogParserTest {
     }
 
     @Test
+    fun `RrdLog keeps raw text of captured block`() {
+        RrdLog.clear()
+        listOf(
+            "=== RRD Event Log ===",
+            "Idx | Date/Time | Event | S | Cur | Min | Max | Unit | Dur",
+            "0 | 01.06.26 14:32:10 | A1 Stat | S | 28 | 28 | 28 | LSB | 0",
+            "Total entries: 1",
+        ).forEach { RrdLog.feedLine(it) }
+        val dump = RrdLog.dump.value
+        assertNotNull(dump)
+        assertEquals(true, dump!!.rawText.contains("RRD Event Log"))
+        assertEquals(true, dump.rawText.contains("Total entries: 1"))
+        RrdLog.clear()
+    }
+
+    @Test
+    fun `pairs start and end into one interval with duration`() {
+        val events = listOf(
+            RrdEvent(0, "01.06.26 14:32:10", "A1 Stat", "S", "28", "28", "28", "LSB", "0"),
+            RrdEvent(1, "01.06.26 14:32:11", "A1 Stat", "E", "28", "28", "28", "LSB", "1"),
+        )
+        val intervals = pairRrdEvents(events)
+        assertEquals(1, intervals.size)
+        val iv = intervals[0]
+        assertEquals(0, iv.startIdx)
+        assertEquals(1, iv.endIdx)
+        assertEquals(1L, iv.durationSec)
+        assertEquals(false, iv.ongoing)
+    }
+
+    @Test
+    fun `unpaired start is marked ongoing`() {
+        val events = listOf(
+            RrdEvent(5, "01.06.26 14:35:00", "A2 Stat", "S", "30", "29", "31", "LSB", "0"),
+        )
+        val intervals = pairRrdEvents(events)
+        assertEquals(1, intervals.size)
+        assertEquals(true, intervals[0].ongoing)
+        assertNull(intervals[0].endIdx)
+        assertNull(intervals[0].durationSec)
+    }
+
+    @Test
     fun `strips ansi codes before parsing`() {
         val withAnsi =
             "\u001B[2J=== RRD Event Log ===\n" +

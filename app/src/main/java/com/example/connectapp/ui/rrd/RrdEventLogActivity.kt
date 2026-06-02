@@ -18,7 +18,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -27,6 +30,7 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,16 +40,21 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.connectapp.ui.theme.AppThemeWithSettings
-import com.example.connectapp.utils.RrdEvent
+import com.example.connectapp.utils.RrdInterval
 import com.example.connectapp.utils.RrdLog
+import com.example.connectapp.utils.pairRrdEvents
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -186,7 +195,13 @@ private fun RrdEventLogScreen(onBack: () -> Unit, onExportCsv: () -> Unit, onExp
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Журнал событий (${events.size})") },
+                title = {
+                    Text(
+                        "Журнал событий (${events.size})",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
@@ -229,6 +244,8 @@ private fun RrdEventLogScreen(onBack: () -> Unit, onExportCsv: () -> Unit, onExp
                     )
                 }
             } else {
+                var rawMode by remember { mutableStateOf(false) }
+                val intervals = remember(events) { pairRrdEvents(events) }
                 Column(Modifier.fillMaxSize()) {
                     Text(
                         "Снято: ${capturedText(dump?.capturedAt)}",
@@ -236,14 +253,42 @@ private fun RrdEventLogScreen(onBack: () -> Unit, onExportCsv: () -> Unit, onExp
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        // Ключ по позиции, а не по idx — плата может прислать
-                        // повторяющиеся idx, и key={it.idx} уронил бы LazyColumn.
-                        itemsIndexed(events) { _, e -> RrdRow(e) }
+                        FilterChip(
+                            selected = !rawMode,
+                            onClick = { rawMode = false },
+                            label = { Text("Парсинг") },
+                        )
+                        FilterChip(
+                            selected = rawMode,
+                            onClick = { rawMode = true },
+                            label = { Text("Сырьё") },
+                        )
+                    }
+                    if (rawMode) {
+                        SelectionContainer(
+                            modifier = Modifier.fillMaxSize().padding(12.dp)
+                        ) {
+                            Text(
+                                dump?.rawText.orEmpty().ifBlank { "(сырьё недоступно)" },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            // Ключ по позиции, а не по idx — плата может прислать
+                            // повторяющиеся idx, и key={it.idx} уронил бы LazyColumn.
+                            itemsIndexed(intervals) { _, iv -> RrdIntervalRow(iv) }
+                        }
                     }
                 }
             }
@@ -251,8 +296,20 @@ private fun RrdEventLogScreen(onBack: () -> Unit, onExportCsv: () -> Unit, onExp
     }
 }
 
+private fun durText(iv: RrdInterval): String = when {
+    iv.durationSec != null -> "${iv.durationSec} с"
+    iv.durRaw.isNotBlank() -> iv.durRaw
+    else -> "—"
+}
+
+private fun timeLine(iv: RrdInterval): String = when {
+    iv.endTime != null -> "${iv.startTime} → ${iv.endTime}  ·  длит. ${durText(iv)}"
+    iv.ongoing -> "${iv.startTime}  ·  не завершено"
+    else -> iv.startTime
+}
+
 @Composable
-private fun RrdRow(e: RrdEvent) {
+private fun RrdIntervalRow(iv: RrdInterval) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -266,19 +323,25 @@ private fun RrdRow(e: RrdEvent) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                "#${e.idx}",
+                if (iv.endIdx != null) "#${iv.startIdx}–${iv.endIdx}" else "#${iv.startIdx}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.primary,
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "${e.event} · ${e.marker}",
+                    iv.event + if (iv.ongoing) " · идёт" else "",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    "${e.dateTime}  ·  cur ${e.cur} / min ${e.min} / max ${e.max} ${e.unit} · dur ${e.dur}",
+                    timeLine(iv),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "cur ${iv.cur} / min ${iv.min} / max ${iv.max} ${iv.unit}",
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
