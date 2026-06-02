@@ -94,7 +94,11 @@ class BluetoothViewModel(
             CommandBus.commands.collect { cmd ->
                 val forUs = cmd.target == null || cmd.target == FG_OWNER
                 if (forUs && state.value is ConnectionState.Connected) {
-                    sendSilent(cmd.payload)
+                    // ESC (0x1B) — выход из мониторинга в новой прошивке. Плате
+                    // нужен голый байт без line-ending, иначе уходит "ESC\r\n" и
+                    // стоп не срабатывает. Шлём как raw-байт, остальное — текстом.
+                    if (cmd.payload == "\u001B") sendEscape()
+                    else sendSilent(cmd.payload)
                 }
             }
         }
