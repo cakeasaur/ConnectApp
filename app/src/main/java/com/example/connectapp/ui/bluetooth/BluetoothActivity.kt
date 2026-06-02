@@ -53,7 +53,10 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -82,6 +85,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.FileProvider
@@ -158,6 +162,7 @@ private fun BluetoothScreen(
     var payload by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("") }
     var hexMode by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var quickCmdsOpen by remember { mutableStateOf(false) }
     var calibOpen by remember { mutableStateOf(false) }
@@ -262,43 +267,78 @@ private fun BluetoothScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.btn_bluetooth)) },
+                title = {
+                    Text(
+                        stringResource(R.string.btn_bluetooth),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.btn_back))
                     }
                 },
                 actions = {
-                    RecordingButton(
-                        isRecording = isRecording,
-                        onStart = {
-                            val f = viewModel.startRecording()
-                            if (f != null) Toast.makeText(ctx, ctx.getString(R.string.rec_started, f.name), Toast.LENGTH_SHORT).show()
-                        },
-                        onStop = {
-                            val f = viewModel.stopRecording() ?: recordingFile
-                            if (f != null) {
-                                Toast.makeText(ctx, ctx.getString(R.string.rec_stopped, f.name), Toast.LENGTH_LONG).show()
-                                shareRecording(ctx, f)
-                            }
-                        }
-                    )
+                    // Часто используемое — видимыми кнопками.
                     IconButton(onClick = { viewModel.sendEscape() }, enabled = connected) {
                         Icon(Icons.Filled.Stop, contentDescription = "Стоп потока (ESC)")
                     }
-                    IconButton(onClick = {
-                        ctx.startActivity(Intent(ctx, com.example.connectapp.ui.console.CommandLogActivity::class.java))
-                    }) {
-                        Icon(Icons.Filled.Terminal, contentDescription = stringResource(R.string.btn_command_log))
-                    }
-                    IconButton(onClick = { calibOpen = true }) {
-                        Icon(Icons.Filled.GpsFixed, contentDescription = stringResource(R.string.btn_calibrate))
+                    IconButton(onClick = onOpenGraphs) {
+                        Icon(Icons.Filled.Insights, contentDescription = stringResource(R.string.btn_graphs))
                     }
                     IconButton(onClick = { settingsOpen = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.settings_title))
                     }
-                    IconButton(onClick = onOpenGraphs) {
-                        Icon(Icons.Filled.Insights, contentDescription = stringResource(R.string.btn_graphs))
+                    // Остальное — в overflow-меню, чтобы не распирало шапку.
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Ещё")
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (isRecording) stringResource(R.string.rec_stop)
+                                        else stringResource(R.string.rec_start)
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        if (isRecording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
+                                        contentDescription = null,
+                                        tint = if (isRecording) MaterialTheme.colorScheme.onSurface
+                                               else MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    if (isRecording) {
+                                        val f = viewModel.stopRecording() ?: recordingFile
+                                        if (f != null) {
+                                            Toast.makeText(ctx, ctx.getString(R.string.rec_stopped, f.name), Toast.LENGTH_LONG).show()
+                                            shareRecording(ctx, f)
+                                        }
+                                    } else {
+                                        val f = viewModel.startRecording()
+                                        if (f != null) Toast.makeText(ctx, ctx.getString(R.string.rec_started, f.name), Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.btn_command_log)) },
+                                leadingIcon = { Icon(Icons.Filled.Terminal, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    ctx.startActivity(Intent(ctx, com.example.connectapp.ui.console.CommandLogActivity::class.java))
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.btn_calibrate)) },
+                                leadingIcon = { Icon(Icons.Filled.GpsFixed, contentDescription = null) },
+                                onClick = { menuOpen = false; calibOpen = true }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -489,9 +529,10 @@ private fun BluetoothScreen(
 private fun renderLog(raw: String, filter: String, hexMode: Boolean): String {
     val filtered = if (filter.isBlank()) raw
         else raw.lineSequence().filter { it.contains(filter, ignoreCase = true) }.joinToString("\n")
-    // Текстовый режим: убираем ANSI escape-коды (эхо AT-консоли). В hex-режиме
-    // оставляем сырьё, чтобы видеть все байты включая 1b.
-    if (!hexMode) return stripAnsi(filtered)
+    // Текстовый режим: убираем ANSI escape-коды + схлопываем эхо AT-консоли
+    // (она перепечатывает команду посимвольно: "m> mo> mon> monitor").
+    // В hex-режиме оставляем сырьё, чтобы видеть все байты включая 1b.
+    if (!hexMode) return collapseEcho(stripAnsi(filtered))
     // Hex view: каждый байт UTF-8 в шестнадцатеричном виде, по 16 байт в строке.
     val bytes = filtered.toByteArray()
     return buildString {
@@ -516,21 +557,26 @@ private fun shareRecording(ctx: android.content.Context, file: File) {
     ctx.startActivity(Intent.createChooser(intent, ctx.getString(R.string.rec_share)))
 }
 
-@Composable
-private fun RecordingButton(
-    isRecording: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit
-) {
-    IconButton(onClick = { if (isRecording) onStop() else onStart() }) {
-        Icon(
-            imageVector = if (isRecording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
-            contentDescription = stringResource(if (isRecording) R.string.rec_stop else R.string.rec_start),
-            // REC иконка всегда красная (классика), Stop — нейтральный цвет шрифта.
-            tint = if (isRecording) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error
-        )
+/**
+ * Схлопывает посимвольное эхо AT-консоли. Плата перепечатывает команду после
+ * каждого нажатия: "m> mo> mon> monitor". Внутри строки бьём по "> " и
+ * выбрасываем фрагмент, если он — префикс следующего (инкрементальный ввод),
+ * и пустые фрагменты-промпты. Обычный текст (без "> ") не трогаем.
+ */
+private fun collapseEcho(text: String): String =
+    text.lineSequence().joinToString("\n") { line ->
+        if ("> " !in line) return@joinToString line
+        val parts = line.split("> ")
+        val kept = ArrayList<String>(parts.size)
+        for (i in parts.indices) {
+            val cur = parts[i]
+            if (cur.isEmpty()) continue
+            val next = parts.getOrNull(i + 1)
+            if (next != null && next.startsWith(cur)) continue
+            kept.add(cur)
+        }
+        if (kept.isEmpty()) line.trim() else kept.joinToString("> ")
     }
-}
 
 @Composable
 private fun HeartbeatRow(state: ConnectionState, lastPacketAt: Long?) {
@@ -553,7 +599,9 @@ private fun HeartbeatRow(state: ConnectionState, lastPacketAt: Long?) {
         ageMs < 60_000 -> stringResource(R.string.hb_seconds_ago, (ageMs / 1000).toInt())
         else -> stringResource(R.string.hb_minutes_ago, (ageMs / 60_000).toInt())
     }
-    val warn = ageMs > 5_000
+    // Красным — только при реальном простое (раньше 5с давало красный даже в
+    // командном режиме, где поток намеренно выключен).
+    val warn = ageMs > 30_000
     Text(
         "${stringResource(R.string.hb_label)} $ageText",
         style = MaterialTheme.typography.labelMedium,
