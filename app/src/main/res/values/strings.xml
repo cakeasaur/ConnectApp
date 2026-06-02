@@ -115,6 +115,7 @@
     <string name="cmd_one" translatable="false">monitor</string>
     <string name="cmd_two" translatable="false">calib</string>
     <string name="cmd_three" translatable="false">quick test</string>
+    <string name="cmd_log_dump" translatable="false">log dump</string>
 
     <!-- История записей -->
     <string name="history_title">Записанные сессии</string>

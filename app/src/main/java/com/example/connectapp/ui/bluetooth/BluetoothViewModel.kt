@@ -425,7 +425,8 @@ class BluetoothViewModel(
             val parsed = DataParser.parse(line)
             if (parsed == null) {
                 // Не телеметрия — текстовый ответ (help/меню/статус). В отдельный лог.
-                if (line.any { it.isLetter() }) CommandLog.append(line)
+                CommandLog.appendIfText(line)
+                com.example.connectapp.utils.RrdLog.feedLine(line)
                 continue
             }
             val merged = _sensorData.updateAndGet { it.merge(parsed) }
