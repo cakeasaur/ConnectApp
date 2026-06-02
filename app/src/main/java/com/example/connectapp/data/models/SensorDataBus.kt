@@ -49,6 +49,24 @@ object SensorDataBus {
         push(if (slot == 2) temp2Ch else temp1Ch, TimedPoint(ts, value))
     }
 
+    /**
+     * Публикует акселерометры из распознанной строки [parsed], добивая
+     * недостающие оси последними известными значениями из [merged]
+     * (carry-forward вместо нулей — иначе частичная строка с одной осью
+     * портит |a|/наклон/вибрацию). Слот публикуется только если в [parsed]
+     * была хотя бы одна его ось И все три оси уже известны в [merged].
+     */
+    fun publishAccel(parsed: SensorData, merged: SensorData) {
+        if (parsed.accel1X != null || parsed.accel1Y != null || parsed.accel1Z != null) {
+            val x = merged.accel1X; val y = merged.accel1Y; val z = merged.accel1Z
+            if (x != null && y != null && z != null) addAccel(1, x, y, z)
+        }
+        if (parsed.accel2X != null || parsed.accel2Y != null || parsed.accel2Z != null) {
+            val x = merged.accel2X; val y = merged.accel2Y; val z = merged.accel2Z
+            if (x != null && y != null && z != null) addAccel(2, x, y, z)
+        }
+    }
+
     fun addAccel(slot: Int, x: Float, y: Float, z: Float, ts: Long = System.currentTimeMillis()) {
         if (slot == 2) {
             push(a2xCh, TimedPoint(ts, x))

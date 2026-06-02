@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -97,6 +98,7 @@ import com.example.connectapp.ui.theme.ConnectAppTheme
 import com.example.connectapp.ui.wifi.LogView
 import com.example.connectapp.ui.wifi.StatusBadge
 import com.example.connectapp.utils.PermissionHelper
+import com.example.connectapp.utils.stripAnsi
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
@@ -281,6 +283,14 @@ private fun BluetoothScreen(
                             }
                         }
                     )
+                    IconButton(onClick = { viewModel.sendEscape() }, enabled = connected) {
+                        Icon(Icons.Filled.Stop, contentDescription = "Стоп потока (ESC)")
+                    }
+                    IconButton(onClick = {
+                        ctx.startActivity(Intent(ctx, com.example.connectapp.ui.console.CommandLogActivity::class.java))
+                    }) {
+                        Icon(Icons.Filled.Terminal, contentDescription = stringResource(R.string.btn_command_log))
+                    }
                     IconButton(onClick = { calibOpen = true }) {
                         Icon(Icons.Filled.GpsFixed, contentDescription = stringResource(R.string.btn_calibrate))
                     }
@@ -479,7 +489,9 @@ private fun BluetoothScreen(
 private fun renderLog(raw: String, filter: String, hexMode: Boolean): String {
     val filtered = if (filter.isBlank()) raw
         else raw.lineSequence().filter { it.contains(filter, ignoreCase = true) }.joinToString("\n")
-    if (!hexMode) return filtered
+    // Текстовый режим: убираем ANSI escape-коды (эхо AT-консоли). В hex-режиме
+    // оставляем сырьё, чтобы видеть все байты включая 1b.
+    if (!hexMode) return stripAnsi(filtered)
     // Hex view: каждый байт UTF-8 в шестнадцатеричном виде, по 16 байт в строке.
     val bytes = filtered.toByteArray()
     return buildString {
