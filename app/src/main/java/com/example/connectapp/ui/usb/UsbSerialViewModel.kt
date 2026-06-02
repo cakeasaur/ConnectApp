@@ -162,7 +162,8 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
         for (line in records) {
             val parsed = DataParser.parse(line)
             if (parsed == null) {
-                if (line.any { it.isLetter() }) CommandLog.append(line)
+                CommandLog.appendIfText(line)
+                com.example.connectapp.utils.RrdLog.feedLine(line)
                 continue
             }
             val merged = _sensorData.updateAndGet { it.merge(parsed) }

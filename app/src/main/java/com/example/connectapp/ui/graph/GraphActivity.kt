@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -56,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,6 +69,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.connectapp.R
@@ -420,6 +423,14 @@ private fun GraphScreen(
                             contentDescription = "Журнал аномалий"
                         )
                     }
+                    // Журнал событий RRD (вывод `log dump`).
+                    IconButton(onClick = {
+                        ctx.startActivity(
+                            android.content.Intent(ctx, com.example.connectapp.ui.rrd.RrdEventLogActivity::class.java)
+                        )
+                    }) {
+                        Icon(Icons.Filled.Storage, contentDescription = "Журнал событий (RRD)")
+                    }
                     // Сброс pinch-zoom — появляется только когда активен зум.
                     if (zoom.isZoomed) {
                         IconButton(onClick = { zoom.reset() }) {
@@ -496,6 +507,8 @@ private fun GraphScreen(
             val cmdStart = stringResource(R.string.cmd_one)
             val cmdCalib = stringResource(R.string.cmd_two)
             val cmdQuick = stringResource(R.string.cmd_three)
+            val cmdDump = stringResource(R.string.cmd_log_dump)
+            val scope = rememberCoroutineScope()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
                     onClick = { CommandBus.send(cmdCalib, transport) },
@@ -505,6 +518,19 @@ private fun GraphScreen(
                     onClick = { CommandBus.send(cmdQuick, transport) },
                     modifier = Modifier.weight(1f)
                 ) { Text("test") }
+                FilledTonalButton(
+                    onClick = {
+                        // ESC прерывает мониторинг → ждём промпт → шлём `log dump`.
+                        scope.launch {
+                            CommandBus.send("\u001B", transport)
+                            CommandLog.append("→ log dump")
+                            delay(300)
+                            CommandBus.send(cmdDump, transport)
+                            monitoring = false
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("dump") }
                 Button(
                     onClick = {
                         // Старт — словом `monitor`; стоп — ESC (этой плате поток
