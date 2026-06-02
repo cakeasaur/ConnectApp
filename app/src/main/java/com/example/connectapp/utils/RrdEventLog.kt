@@ -22,6 +22,8 @@ data class RrdEvent(
 data class RrdDump(
     val events: List<RrdEvent>,
     val totalEntries: Int?,
+    /** Когда дамп снят (часы устройства, epoch ms). 0 = не штампован. */
+    val capturedAt: Long = 0L,
 )
 
 /**
@@ -129,7 +131,7 @@ object RrdLog {
                 t.contains("Total entries", ignoreCase = true) -> {
                     capturing = false
                     val parsed = RrdEventLogParser.parse(buf.toString())
-                    parsed?.let { _dump.value = it }
+                    parsed?.let { _dump.value = it.copy(capturedAt = System.currentTimeMillis()) }
                     buf.setLength(0)
                 }
                 buf.length > MAX_BUF -> {        // незавершённый дамп — сброс
