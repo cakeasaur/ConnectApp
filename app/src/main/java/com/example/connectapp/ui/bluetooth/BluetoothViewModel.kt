@@ -6,6 +6,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.CommandBus
+import com.example.connectapp.data.models.CommandLog
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.GlobalConnectionStatus
 import com.example.connectapp.data.models.SensorData
@@ -31,7 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -233,6 +234,19 @@ class BluetoothViewModel(
         }
     }
 
+    /** Шлёт ESC (0x1B) сырым байтом без терминатора — прошивка прерывает
+     *  поток телеметрии по нему ("press escape" в boot-меню). */
+    fun sendEscape() {
+        logBuffer.appendLine("→ ESC (0x1B)", viewModelScope)
+        scheduleSave()
+        viewModelScope.launch {
+            repo.sendBytes(byteArrayOf(0x1B)).onFailure { e ->
+                logBuffer.appendLine("← [ERROR] ${e.message ?: "send failed"}", viewModelScope)
+                scheduleSave()
+            }
+        }
+    }
+
     private fun sendHex(input: String) {
         val bytes = HexCodec.parse(input)
         if (bytes == null) {
@@ -408,27 +422,16 @@ class BluetoothViewModel(
             DataParser.drainRecords(lineBuffer)
         }
         for (line in records) {
-            DataParser.parse(line)?.let { parsed ->
-                _sensorData.update { it.merge(parsed) }
-                parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
-                parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
-                if (parsed.accel1X != null || parsed.accel1Y != null || parsed.accel1Z != null) {
-                    SensorDataBus.addAccel(
-                        slot = 1,
-                        x = parsed.accel1X ?: 0f,
-                        y = parsed.accel1Y ?: 0f,
-                        z = parsed.accel1Z ?: 0f
-                    )
-                }
-                if (parsed.accel2X != null || parsed.accel2Y != null || parsed.accel2Z != null) {
-                    SensorDataBus.addAccel(
-                        slot = 2,
-                        x = parsed.accel2X ?: 0f,
-                        y = parsed.accel2Y ?: 0f,
-                        z = parsed.accel2Z ?: 0f
-                    )
-                }
+            val parsed = DataParser.parse(line)
+            if (parsed == null) {
+                // Не телеметрия — текстовый ответ (help/меню/статус). В отдельный лог.
+                if (line.any { it.isLetter() }) CommandLog.append(line)
+                continue
             }
+            val merged = _sensorData.updateAndGet { it.merge(parsed) }
+            parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
+            parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
+            SensorDataBus.publishAccel(parsed, merged)
         }
     }
 

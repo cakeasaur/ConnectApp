@@ -59,6 +59,7 @@
 
     <!-- Calibration -->
     <string name="btn_calibrate">Калибровка</string>
+    <string name="btn_command_log">Лог команд</string>
     <string name="calib_title">Калибровка акселерометров</string>
     <string name="calib_starting">Отправляю команду…</string>
     <string name="calib_close">Закрыть</string>

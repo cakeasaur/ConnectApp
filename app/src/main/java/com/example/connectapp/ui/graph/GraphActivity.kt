@@ -70,7 +70,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.connectapp.R
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.OutlinedTextField
 import com.example.connectapp.data.models.CommandBus
+import com.example.connectapp.data.models.CommandLog
+import com.example.connectapp.ui.wifi.LogView
+import com.example.connectapp.utils.stripAnsi
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.ui.theme.AppThemeWithSettings
@@ -479,7 +487,8 @@ private fun GraphScreen(
             }
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .weight(1f)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -740,11 +749,76 @@ private fun GraphScreen(
                 sampleRateHz = sampleRateHz,
             )
         }
+            // Встроенная консоль внизу: лог текстовых ответов платы + ввод команд.
+            CommandConsole(transport = transport)
         } // outer Column (loading indicator wrapper)
     }
 
     if (showAlertDialog) {
         AlertSettingsDialog(onDismiss = { showAlertDialog = false })
+    }
+}
+
+/**
+ * Встроенная консоль внизу экрана графиков: лог текстовых ответов платы
+ * ([CommandLog]) + поле ввода команды. Отправка идёт через [CommandBus] на
+ * активный транспорт; отправленная команда эхо-логируется как "→ cmd".
+ */
+@Composable
+private fun CommandConsole(transport: String) {
+    val log by CommandLog.text.collectAsStateWithLifecycle()
+    var input by remember { mutableStateOf("") }
+
+    fun send() {
+        val cmd = input.trim()
+        if (cmd.isEmpty()) return
+        CommandBus.send(cmd, transport)
+        CommandLog.append("→ $cmd")
+        input = ""
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(110.dp)
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    RoundedCornerShape(8.dp)
+                )
+                .padding(6.dp)
+        ) {
+            if (log.isEmpty()) {
+                Text(
+                    "Лог команд платы (help / меню / статус)…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                LogView(log = stripAnsi(log), modifier = Modifier.fillMaxSize(), autoScroll = true)
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                singleLine = true,
+                label = { Text("команда плате") },
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = { send() }, enabled = input.isNotBlank()) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
+            }
+        }
     }
 }
 

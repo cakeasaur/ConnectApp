@@ -10,6 +10,17 @@ import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
+private val ANSI_ESCAPE = Regex("\u001B\\[[0-9;?=]*[A-Za-z]")
+
+/**
+ * Удаляет ANSI escape-последовательности (управление курсором/цветом/очисткой
+ * строки) для читаемого отображения интерактивного вывода платы (AT-консоль
+ * эхо-печатает ввод с кодами `ESC[K` и т.п.). Только для показа — сырой буфер
+ * и парсинг телеметрии не затрагиваются.
+ */
+fun stripAnsi(text: String): String =
+    ANSI_ESCAPE.replace(text, "").replace("\u001B", "")
+
 /**
  * Накопительный лог с фиксированным окном. Раньше appendLog был O(n) на каждое
  * сообщение (`_log.value + chunk` → `takeLast(MAX)` создавали две строки),

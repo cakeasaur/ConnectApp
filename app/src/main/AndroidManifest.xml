@@ -114,6 +114,11 @@
             android:exported="false"
             android:parentActivityName=".ui.graph.GraphActivity" />
 
+        <activity
+            android:name=".ui.console.CommandLogActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.bluetooth.BluetoothActivity" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
