@@ -507,7 +507,10 @@ private fun GraphScreen(
                 ) { Text("test") }
                 Button(
                     onClick = {
-                        CommandBus.send(cmdStart, transport)
+                        // Старт — словом `monitor`; стоп — ESC (этой плате поток
+                        // обрывает только ESC, повторная команда не останавливает).
+                        if (monitoring) CommandBus.send("\u001B", transport)
+                        else CommandBus.send(cmdStart, transport)
                         monitoring = !monitoring
                     },
                     modifier = Modifier.weight(1f)
