@@ -126,7 +126,7 @@ fun NeonChart(
     // Density-aware padding: захватываем здесь чтобы использовать в pointerInput
     // (там нет DrawScope, поэтому density нужен из LocalDensity).
     val localDensity = androidx.compose.ui.platform.LocalDensity.current.density
-    val padAxisPx = (localDensity * 25f).coerceAtLeast(PAD_LEFT_MIN)
+    val padAxisPx = (localDensity * 32f).coerceAtLeast(PAD_LEFT_MIN)
     if (nonEmpty.isEmpty()) {
         Box(
             modifier = modifier
@@ -241,9 +241,16 @@ fun NeonChart(
                 drawNeonChart(nonEmpty, bounds, config, firstT, lastT, linePath, bandPath)
             }
         }
-        // Легенда сверху-слева.
+        // Легенда сверху-слева: цвет, метка, текущее значение и пометка оси.
         LegendRow(
-            nonEmpty.map { it.label to it.color },
+            nonEmpty.map {
+                LegendItem(
+                    label = it.label,
+                    color = it.color,
+                    value = it.data.lastOrNull()?.value,
+                    rightAxis = it.axis == NeonAxis.RIGHT,
+                )
+            },
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
         )
         // Индикатор зума снизу-справа: "×2.5". Двойной тап сбрасывает.
@@ -389,10 +396,11 @@ private fun computeBounds(
  * PAD_LEFT/PAD_RIGHT_WITH_AXIS вычисляются динамически в DrawScope
  * на основе density, поэтому константы здесь — fallback-минимумы.
  *
- * Формула: density * 10sp * 4.5 chars * ~0.55 char-width-ratio ≈ density * 25f.
- * На плотных экранах (density≥2.5) тикет "27.0" иначе вылезает за левый край.
+ * Формула: density * 10sp * 5.5 chars * ~0.58 char-width-ratio ≈ density * 32f.
+ * Бюджет 5.5 символов — чтобы влезала отрицательная метка со знаком ("-0.50"),
+ * иначе минус (крайний левый символ) подрезался clipRect у границы канваса.
  */
-private const val PAD_LEFT_MIN = 72f   // fallback если density < 2
+private const val PAD_LEFT_MIN = 90f   // fallback если density < 2
 private const val PAD_RIGHT_BASE = 12f
 private const val PAD_RIGHT_AXIS_MIN = 72f
 private const val PAD_TOP = 24f
@@ -409,7 +417,7 @@ private fun DrawScope.drawNeonChart(
 ) {
     // Density-aware: 10sp × 4.5 chars × ~0.55 char-width ≈ density*25f.
     // Без этого на экранах density≥2.5 тикеты вида "27.0" обрезались слева.
-    val padAxis = (density * 25f).coerceAtLeast(PAD_LEFT_MIN)
+    val padAxis = (density * 32f).coerceAtLeast(PAD_LEFT_MIN)
     val padR = if (bounds.right != null) padAxis else PAD_RIGHT_BASE
     val plotL = padAxis
     val plotR = size.width - padR
@@ -914,9 +922,16 @@ private fun Color.toArgb(): Int {
 // Legend
 // ============================================================
 
+private data class LegendItem(
+    val label: String,
+    val color: Color,
+    val value: Float?,
+    val rightAxis: Boolean,
+)
+
 @Composable
 private fun LegendRow(
-    items: List<Pair<String, Color>>,
+    items: List<LegendItem>,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -924,12 +939,14 @@ private fun LegendRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        items.forEach { (label, color) ->
-            // Цветной "●" в строке заменяет отдельный кружок-Canvas — проще,
-            // меньше layout-логики, выглядит одинаково.
+        items.forEach { item ->
+            // "● ax 0.42ᴿ" — цвет, метка, текущее значение, ᴿ для правой оси.
+            // Цветной "●" в строке заменяет отдельный кружок-Canvas.
+            val v = item.value?.let { " " + formatTick(it) } ?: ""
+            val axisMark = if (item.rightAxis) "ᴿ" else ""
             Text(
-                "● $label",
-                color = color,
+                "● ${item.label}$v$axisMark",
+                color = item.color,
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = FontFamily.Monospace,
             )
@@ -954,7 +971,7 @@ private fun CrosshairOverlay(
     if (lastT <= firstT) return
 
     Canvas(Modifier.fillMaxSize()) {
-        val padAxis = (density * 25f).coerceAtLeast(PAD_LEFT_MIN)
+        val padAxis = (density * 32f).coerceAtLeast(PAD_LEFT_MIN)
         val padR = if (series.any { it.axis == NeonAxis.RIGHT }) padAxis else PAD_RIGHT_BASE
         val plotL = padAxis; val plotR = size.width - padR
         // Cursor 1 — белый.
