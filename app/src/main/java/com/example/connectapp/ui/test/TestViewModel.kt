@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.SensorData
+import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.CommandLog
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.utils.DataParser
@@ -51,6 +52,40 @@ class TestViewModel(
      */
     @Volatile var replayFile: File? = null
 
+    init {
+        // В тест-режиме платы нет, но кнопки/консоль на экране графиков шлют
+        // команды в CommandBus с target="test". Раньше их никто не слушал —
+        // отсюда ощущение «заглушек». Отвечаем синтетически, как реальная плата:
+        // ответ уходит в тот же конвейер (лог + консоль), monitor/stop реально
+        // запускают/останавливают mock-поток, dump наполняет «Журнал событий».
+        viewModelScope.launch {
+            CommandBus.commands.collect { cmd ->
+                if (cmd.target == "test" || cmd.target == null) respondMock(cmd.payload)
+            }
+        }
+    }
+
+    private fun respondMock(payload: String) {
+        val p = payload.lowercase()
+        when {
+            payload.any { it.code == 27 } -> { stop(); injectFromBoard("Exiting monitoring...\n") }
+            "monitor" in p -> { start(); injectFromBoard("Starting enhanced monitoring at 10 Hz\n") }
+            "calib" in p ->
+                injectFromBoard("Loading calibration data from EEPROM... OK\nCalibration complete\n")
+            "test" in p -> injectFromBoard("Self-test: sensors OK, links OK\n")
+            "dump" in p -> injectFromBoard(MOCK_RRD_DUMP)
+            "help" in p -> injectFromBoard(MOCK_HELP)
+            else -> injectFromBoard("ERR: unknown command '${payload.trim()}'\n")
+        }
+    }
+
+    /** Прогоняет синтетический ответ «платы» через тот же путь, что и реальный поток. */
+    private fun injectFromBoard(text: String) {
+        logBuffer.appendRaw(text, viewModelScope)
+        _lastPacketAt.value = System.currentTimeMillis()
+        viewModelScope.launch(Dispatchers.Default) { parseChunk(text) }
+    }
+
     fun toggle() {
         if (_running.value) stop() else start()
     }
@@ -96,16 +131,20 @@ class TestViewModel(
         // synchronized — parseChunk бежит на Dispatchers.Default, а clearLog
         // с Main. StringBuilder не thread-safe.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
+        // Текстовые ответы платы (help/menu/calib/status) приходят без '\n'
+        // отдельными чанками — drainRecords (кадрировщик ТЕЛЕМЕТРИИ) их не
+        // выдаёт, поэтому консоль их не видела. Фидим CommandLog из сырья: каждая
+        // строка чанка, которую парсер НЕ распознал как телеметрию.
+        for (raw in normalised.split('\n')) {
+            val t = raw.trim()
+            if (t.isNotEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
+        }
         val records = synchronized(lineBuffer) {
             lineBuffer.append(normalised)
             DataParser.drainRecords(lineBuffer)
         }
         for (line in records) {
-            val parsed = DataParser.parse(line)
-            if (parsed == null) {
-                CommandLog.appendIfText(line)
-                continue
-            }
+            val parsed = DataParser.parse(line) ?: continue
             val merged = _sensorData.updateAndGet { it.merge(parsed) }
             parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
             parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
@@ -118,3 +157,22 @@ class TestViewModel(
         streamJob?.cancel()
     }
 }
+
+// Синтетический ответ на команду `dump` в тест-режиме — корректный блок RRD,
+// который ловит RrdLog и показывает экран «Журнал событий».
+private val MOCK_RRD_DUMP =
+    "=== RRD Event Log ===\n" +
+    "Idx | Date/Time         | Event   | S | Cur | Min | Max | Unit | Dur\n" +
+    "----+-------------------+---------+---+-----+-----+-----+------+----\n" +
+    "0   | 04.06.26 01:40:00 | A1 Stat | S | 12  | 12  | 12  | LSB  | 0\n" +
+    "1   | 04.06.26 01:40:05 | A1 Stat | E | 18  | 12  | 22  | LSB  | 5\n" +
+    "2   | 04.06.26 01:41:10 | T1 Warn | S | 29  | 22  | 31  | C    | 0\n" +
+    "Total entries: 3\n"
+
+private val MOCK_HELP =
+    "Available commands:\n" +
+    "  monitor   - start telemetry stream\n" +
+    "  calib     - load accelerometer calibration\n" +
+    "  test      - run self-test\n" +
+    "  log dump  - dump RRD event log\n" +
+    "  ESC       - stop monitoring\n"

@@ -156,16 +156,20 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
         com.example.connectapp.utils.RrdLog.feedLine(chunk)
         // synchronized — parseChunk на Dispatchers.Default, clearLog на Main.
         val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
+        // Текстовые ответы платы (help/menu/calib/status) приходят без '\n'
+        // отдельными чанками — drainRecords (кадрировщик ТЕЛЕМЕТРИИ) их не
+        // выдаёт, поэтому консоль их не видела. Фидим CommandLog из сырья: каждая
+        // строка чанка, которую парсер НЕ распознал как телеметрию.
+        for (raw in normalised.split('\n')) {
+            val t = raw.trim()
+            if (t.isNotEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
+        }
         val records = synchronized(lineBuffer) {
             lineBuffer.append(normalised)
             DataParser.drainRecords(lineBuffer)
         }
         for (line in records) {
-            val parsed = DataParser.parse(line)
-            if (parsed == null) {
-                CommandLog.appendIfText(line)
-                continue
-            }
+            val parsed = DataParser.parse(line) ?: continue
             val merged = _sensorData.updateAndGet { it.merge(parsed) }
             parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
             parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
