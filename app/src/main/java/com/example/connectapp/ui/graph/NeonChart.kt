@@ -424,8 +424,9 @@ private fun DrawScope.drawNeonChart(
     linePath: Path,
     bandPath: Path,
 ) {
-    // Density-aware: 10sp × 4.5 chars × ~0.55 char-width ≈ density*25f.
-    // Без этого на экранах density≥2.5 тикеты вида "27.0" обрезались слева.
+    // Density-aware: 10sp × 5.5 chars × ~0.58 char-width ≈ density*32f.
+    // Бюджет 5.5 символов — под отрицательную метку со знаком ("-0.50"),
+    // иначе минус (крайний левый символ) обрезался слева.
     val padAxis = (density * 32f).coerceAtLeast(PAD_LEFT_MIN)
     val padR = if (bounds.right != null) padAxis else PAD_RIGHT_BASE
     val plotL = padAxis
