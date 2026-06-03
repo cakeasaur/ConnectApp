@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.utils.AlertEngine
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * Карточка текущих значений всех каналов. Крупными монospace-цифрами.
@@ -45,6 +46,8 @@ fun CurrentValuesCard(
     a2y: List<TimedPoint>,
     a2z: List<TimedPoint>,
     modifier: Modifier = Modifier,
+    accelInG: Boolean = false,
+    accelSensitivity: Float = 1000f,
 ) {
     // Подписываемся на пороги — UI реагирует на их смену даже при паузе
     // потока данных. Без StateFlow getThreshold() возвращал бы старое
@@ -98,6 +101,7 @@ fun CurrentValuesCard(
                 x = a1x.lastOrNull()?.value, xThr = thresholds["ax1"],
                 y = a1y.lastOrNull()?.value, yThr = thresholds["ay1"],
                 z = a1z.lastOrNull()?.value, zThr = thresholds["az1"],
+                inG = accelInG, sens = accelSensitivity,
             )
 
             // Акселерометр 2 — 3 оси
@@ -106,6 +110,7 @@ fun CurrentValuesCard(
                 x = a2x.lastOrNull()?.value, xThr = thresholds["ax2"],
                 y = a2y.lastOrNull()?.value, yThr = thresholds["ay2"],
                 z = a2z.lastOrNull()?.value, zThr = thresholds["az2"],
+                inG = accelInG, sens = accelSensitivity,
             )
         }
     }
@@ -160,6 +165,8 @@ private fun AccelRow(
     x: Float?, xThr: Float?,
     y: Float?, yThr: Float?,
     z: Float?, zThr: Float?,
+    inG: Boolean,
+    sens: Float,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -172,9 +179,9 @@ private fun AccelRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            AccelComponent("ax", x, xThr, Modifier.weight(1f))
-            AccelComponent("ay", y, yThr, Modifier.weight(1f))
-            AccelComponent("az", z, zThr, Modifier.weight(1f))
+            AccelComponent("ax", x, xThr, inG, sens, Modifier.weight(1f))
+            AccelComponent("ay", y, yThr, inG, sens, Modifier.weight(1f))
+            AccelComponent("az", z, zThr, inG, sens, Modifier.weight(1f))
         }
     }
 }
@@ -184,10 +191,17 @@ private fun AccelComponent(
     label: String,
     value: Float?,
     threshold: Float?,
+    inG: Boolean,
+    sens: Float,
     modifier: Modifier = Modifier,
 ) {
-    val exceeded = value != null && threshold != null && value > threshold
+    // Превышение — по СЫРОМУ LSB и по модулю (как в AlertEngine: вибрация в обе
+    // стороны). Раньше сравнивали знаково (value > threshold) — расходилось с
+    // движком алертов и вердиктом. Отображение — в выбранных единицах.
+    val exceeded = value != null && threshold != null && abs(value) > threshold
     val numberColor = if (exceeded) NeonTheme.alert else NeonTheme.textPrimary
+    val display = if (value == null) null else if (inG && sens > 0f) value / sens else value
+    val fmt = if (inG) "%.2f" else ACCEL_FORMAT
 
     Row(
         modifier = modifier,
@@ -201,7 +215,7 @@ private fun AccelComponent(
             modifier = Modifier.padding(bottom = 3.dp),
         )
         Text(
-            if (value == null) "—" else ACCEL_FORMAT.format(Locale.ROOT, value),
+            if (display == null) "—" else fmt.format(Locale.ROOT, display),
             color = numberColor,
             style = MaterialTheme.typography.titleMedium,
             fontFamily = FontFamily.Monospace,

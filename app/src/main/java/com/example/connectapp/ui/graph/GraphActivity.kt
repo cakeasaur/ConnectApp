@@ -329,6 +329,7 @@ private fun GraphScreen(
     var showSigma by remember { mutableStateOf(false) }
     var showThreshold by remember { mutableStateOf(false) }
     var absoluteTime by rememberSaveable { mutableStateOf(false) }
+    var accelInG by rememberSaveable { mutableStateOf(false) }
     var phaseLock by remember { mutableStateOf(false) }
     // Видимость осей акселерометров — пользователь сам решает что показывать.
     // По умолчанию все включены. rememberSaveable: переживают rotation/конфиг.
@@ -368,6 +369,18 @@ private fun GraphScreen(
     val a2x = remember(a2xSnap, windowMs) { applyWindow(a2xSnap, windowMs) }
     val a2y = remember(a2ySnap, windowMs) { applyWindow(a2ySnap, windowMs) }
     val a2z = remember(a2zSnap, windowMs) { applyWindow(a2zSnap, windowMs) }
+
+    // 3) g-режим: отображаемые версии accel (деление на чувствительность).
+    //    Только для графиков/статов/карточки; MathSection и 3D берут сырые LSB
+    //    (спектр и облако единиц не показывают, конверсия там бессмысленна).
+    val accelSens = appSettings.accelSensitivityLsbPerG
+    val accelUnit = if (accelInG) "g" else "LSB"
+    val a1xD = remember(a1x, accelInG, accelSens) { convAccel(a1x, accelInG, accelSens) }
+    val a1yD = remember(a1y, accelInG, accelSens) { convAccel(a1y, accelInG, accelSens) }
+    val a1zD = remember(a1z, accelInG, accelSens) { convAccel(a1z, accelInG, accelSens) }
+    val a2xD = remember(a2x, accelInG, accelSens) { convAccel(a2x, accelInG, accelSens) }
+    val a2yD = remember(a2y, accelInG, accelSens) { convAccel(a2y, accelInG, accelSens) }
+    val a2zD = remember(a2z, accelInG, accelSens) { convAccel(a2z, accelInG, accelSens) }
 
     Scaffold(
         topBar = {
@@ -676,6 +689,12 @@ private fun GraphScreen(
                     colors = chipColors
                 )
                 FilterChip(
+                    selected = accelInG,
+                    onClick = { accelInG = !accelInG },
+                    label = { Text(if (accelInG) "ед: g" else "ед: LSB") },
+                    colors = chipColors
+                )
+                FilterChip(
                     selected = phaseLock,
                     onClick = { phaseLock = !phaseLock },
                     label = { Text("phase-lock") },
@@ -707,11 +726,12 @@ private fun GraphScreen(
                 phaseLock = phaseLock,
                 absoluteTime = absoluteTime,
             )
+            val vibThreshold = if (accelInG && accelSens > 0f) 1100f / accelSens else 1100f
             val accelConfig = NeonChartConfig(
                 showEnvelope = showEnvelope,
                 showSigma = showSigma,
                 thresholds = if (showThreshold) listOf(
-                    NeonThreshold(1100f, "vibration", Color(0xFFFF8800), NeonAxis.RIGHT)
+                    NeonThreshold(vibThreshold, "vibration", Color(0xFFFF8800), NeonAxis.RIGHT)
                 ) else emptyList(),
                 phaseLock = phaseLock,
                 absoluteTime = absoluteTime,
@@ -733,6 +753,7 @@ private fun GraphScreen(
                 temp1 = temp1, temp2 = temp2,
                 a1x = a1x, a1y = a1y, a1z = a1z,
                 a2x = a2x, a2y = a2y, a2z = a2z,
+                accelInG = accelInG, accelSensitivity = accelSens,
             )
 
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
@@ -751,23 +772,23 @@ private fun GraphScreen(
                 )
             }
 
-            Text("${stringResource(R.string.label_accelerometer)} 1 · LSB", style = MaterialTheme.typography.titleLarge)
+            Text("${stringResource(R.string.label_accelerometer)} 1 · $accelUnit", style = MaterialTheme.typography.titleLarge)
             AxisFilterRow(
                 showX = showAx1, onShowXChange = { showAx1 = it },
                 showY = showAy1, onShowYChange = { showAy1 = it },
                 showZ = showAz1, onShowZChange = { showAz1 = it },
             )
-            if (showAx1) StatsRow("ax", a1x, "LSB")
-            if (showAy1) StatsRow("ay", a1y, "LSB")
-            if (showAz1) StatsRow("az", a1z, "LSB")
+            if (showAx1) StatsRow("ax", a1xD, accelUnit)
+            if (showAy1) StatsRow("ay", a1yD, accelUnit)
+            if (showAz1) StatsRow("az", a1zD, accelUnit)
             ChartCard(height = 220) {
                 // Multi-axis: az → правая ось (диапазон ~900-1100 от гравитации),
                 // ax/ay → левая (±50). Без этого ax/ay сплющены в линию.
                 // Фильтруем по чекбоксам — если ось выключена, серия не добавляется.
                 val a1Series = buildList {
-                    if (showAx1) add(NeonSeries(a1x, accelColors[0], "ax", NeonAxis.LEFT))
-                    if (showAy1) add(NeonSeries(a1y, accelColors[1], "ay", NeonAxis.LEFT))
-                    if (showAz1) add(NeonSeries(a1z, accelColors[2], "az", NeonAxis.RIGHT))
+                    if (showAx1) add(NeonSeries(a1xD, accelColors[0], "ax", NeonAxis.LEFT))
+                    if (showAy1) add(NeonSeries(a1yD, accelColors[1], "ay", NeonAxis.LEFT))
+                    if (showAz1) add(NeonSeries(a1zD, accelColors[2], "az", NeonAxis.RIGHT))
                 }
                 NeonChart(
                     seriesList = a1Series,
@@ -778,20 +799,20 @@ private fun GraphScreen(
                 )
             }
 
-            Text("${stringResource(R.string.label_accelerometer)} 2 · LSB", style = MaterialTheme.typography.titleLarge)
+            Text("${stringResource(R.string.label_accelerometer)} 2 · $accelUnit", style = MaterialTheme.typography.titleLarge)
             AxisFilterRow(
                 showX = showAx2, onShowXChange = { showAx2 = it },
                 showY = showAy2, onShowYChange = { showAy2 = it },
                 showZ = showAz2, onShowZChange = { showAz2 = it },
             )
-            if (showAx2) StatsRow("ax", a2x, "LSB")
-            if (showAy2) StatsRow("ay", a2y, "LSB")
-            if (showAz2) StatsRow("az", a2z, "LSB")
+            if (showAx2) StatsRow("ax", a2xD, accelUnit)
+            if (showAy2) StatsRow("ay", a2yD, accelUnit)
+            if (showAz2) StatsRow("az", a2zD, accelUnit)
             ChartCard(height = 220) {
                 val a2Series = buildList {
-                    if (showAx2) add(NeonSeries(a2x, accelColors[0], "ax", NeonAxis.LEFT))
-                    if (showAy2) add(NeonSeries(a2y, accelColors[1], "ay", NeonAxis.LEFT))
-                    if (showAz2) add(NeonSeries(a2z, accelColors[2], "az", NeonAxis.RIGHT))
+                    if (showAx2) add(NeonSeries(a2xD, accelColors[0], "ax", NeonAxis.LEFT))
+                    if (showAy2) add(NeonSeries(a2yD, accelColors[1], "ay", NeonAxis.LEFT))
+                    if (showAz2) add(NeonSeries(a2zD, accelColors[2], "az", NeonAxis.RIGHT))
                 }
                 NeonChart(
                     seriesList = a2Series,
@@ -986,6 +1007,10 @@ private fun HealthBanner(
         )
     }
 }
+
+/** LSB→g для отображения: делит value на чувствительность. on=false → как есть. */
+private fun convAccel(points: List<TimedPoint>, on: Boolean, sens: Float): List<TimedPoint> =
+    if (on && sens > 0f) points.map { it.copy(value = it.value / sens) } else points
 
 @Composable
 private fun StatsRow(label: String, points: List<TimedPoint>, unit: String) {

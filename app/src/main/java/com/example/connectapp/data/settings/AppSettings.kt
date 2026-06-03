@@ -31,6 +31,12 @@ data class AppSettings(
      * Стандартные значения: 1/5/10/20/50 Гц. По умолчанию 10 Гц (PIC24 default).
      */
     val sampleRateHz: Float = 10f,
+    /**
+     * Чувствительность акселерометра в LSB на 1g — делитель для перевода сырых
+     * LSB в физические g на графиках (режим «g»). Дефолт 1000: на этой плате
+     * ось az покоится ~1000 LSB при 1g (гравитация). Настраивается под датчик.
+     */
+    val accelSensitivityLsbPerG: Float = 1000f,
 ) {
     companion object {
         val DEFAULT = AppSettings()

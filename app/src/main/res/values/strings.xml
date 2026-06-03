@@ -160,6 +160,7 @@
     <!-- Терминатор отправляемых команд -->
     <string name="settings_terminator">Терминатор команд</string>
     <string name="settings_sample_rate">Частота опроса платы (для FFT/STFT)</string>
+    <string name="settings_accel_sens">Чувствительность акселерометра (LSB→g)</string>
     <string name="term_lf" translatable="false">\\n (LF)</string>
     <string name="term_cr" translatable="false">\\r (CR)</string>
     <string name="term_crlf" translatable="false">\\r\\n (CRLF)</string>

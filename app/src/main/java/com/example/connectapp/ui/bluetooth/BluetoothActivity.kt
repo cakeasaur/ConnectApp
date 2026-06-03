@@ -85,8 +85,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.app.ActivityCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -241,6 +243,7 @@ private fun BluetoothScreen(
             onLineEnding = viewModel::setLineEnding,
             onHexSend = viewModel::setHexSendMode,
             onSampleRate = viewModel::setSampleRateHz,
+            onAccelSensitivity = viewModel::setAccelSensitivity,
             onEditQuickCommands = { quickCmdsOpen = true }
         )
     }
@@ -620,6 +623,7 @@ private fun SettingsDialog(
     onLineEnding: (LineEnding) -> Unit,
     onHexSend: (Boolean) -> Unit,
     onSampleRate: (Float) -> Unit,
+    onAccelSensitivity: (Float) -> Unit,
     onEditQuickCommands: () -> Unit
 ) {
     AlertDialog(
@@ -660,6 +664,14 @@ private fun SettingsDialog(
                     style = MaterialTheme.typography.labelLarge
                 )
                 SampleRateChips(current = settings.sampleRateHz, onChange = onSampleRate)
+                Text(
+                    stringResource(R.string.settings_accel_sens),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                AccelSensitivityField(
+                    current = settings.accelSensitivityLsbPerG,
+                    onChange = onAccelSensitivity
+                )
                 // Кастомные команды — отдельный диалог-редактор, открываемый
                 // отсюда. Здесь только summary + кнопка.
                 Row(
@@ -879,6 +891,27 @@ private fun SampleRateChips(current: Float, onChange: (Float) -> Unit) {
             )
         }
     }
+}
+
+/**
+ * Поле чувствительности акселерометра (LSB на 1g). Локальный текст, при валидном
+ * положительном числе сразу персистится. Инициализируется текущим значением при
+ * открытии диалога (не key на current — чтобы не перебивать ввод на каждом emit).
+ */
+@Composable
+private fun AccelSensitivityField(current: Float, onChange: (Float) -> Unit) {
+    var text by remember { mutableStateOf(if (current % 1f == 0f) current.toInt().toString() else current.toString()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { s ->
+            text = s
+            s.replace(',', '.').toFloatOrNull()?.let { if (it > 0f) onChange(it) }
+        },
+        singleLine = true,
+        label = { Text("LSB на 1g") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @Composable

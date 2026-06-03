@@ -307,6 +307,8 @@ class BluetoothViewModel(
         viewModelScope.launch { settingsRepo.setHexSendMode(value) }
     fun setSampleRateHz(value: Float) =
         viewModelScope.launch { settingsRepo.setSampleRateHz(value) }
+    fun setAccelSensitivity(value: Float) =
+        viewModelScope.launch { settingsRepo.setAccelSensitivity(value) }
     fun setQuickCommands(list: List<QuickCommand>) =
         viewModelScope.launch { settingsRepo.setQuickCommands(list) }
 
