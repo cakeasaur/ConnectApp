@@ -44,15 +44,37 @@ class BluetoothClient {
         // Discovery interferes with connection; cancel before connecting.
         runCatching { adapter.cancelDiscovery() }
 
-        val s = device.createRfcommSocketToServiceRecord(Constants.SPP_UUID)
-        try {
-            s.connect()
-        } catch (t: Throwable) {
-            runCatching { s.close() }
-            throw t
+        // Fallback-цепочка. На части устройств (Xiaomi/MIUI + дешёвые SPP-модули
+        // HC-05/06) стандартный secure-RFCOMM по UUID кидает "read failed, socket
+        // might closed or timeout, read ret: -1". Перебираем по очереди:
+        //   1) secure   createRfcommSocketToServiceRecord(SPP)
+        //   2) insecure createInsecureRfcommSocketToServiceRecord(SPP) — без auth
+        //   3) reflection createRfcommSocket(1) — прямой канал 1, древний воркэраунд
+        // Первый успешный — рабочий; если все упали, бросаем последнюю ошибку.
+        val factories: List<() -> BluetoothSocket> = listOf(
+            { device.createRfcommSocketToServiceRecord(Constants.SPP_UUID) },
+            { device.createInsecureRfcommSocketToServiceRecord(Constants.SPP_UUID) },
+            {
+                device.javaClass
+                    .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    .invoke(device, 1) as BluetoothSocket
+            },
+        )
+
+        var lastError: Throwable? = null
+        for (make in factories) {
+            val s = runCatching { make() }.getOrElse { lastError = it; null } ?: continue
+            try {
+                s.connect()
+                socket = s
+                output = s.outputStream
+                return@withContext
+            } catch (t: Throwable) {
+                lastError = t
+                runCatching { s.close() }
+            }
         }
-        socket = s
-        output = s.outputStream
+        throw lastError ?: IllegalStateException("Bluetooth connect failed")
     }
 
     /**
