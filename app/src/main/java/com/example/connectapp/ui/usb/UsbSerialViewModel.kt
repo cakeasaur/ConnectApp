@@ -5,7 +5,7 @@ import android.hardware.usb.UsbDevice
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.CommandBus
-import com.example.connectapp.data.models.CommandLog
+import com.example.connectapp.data.models.SensorStreamProcessor
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.GlobalConnectionStatus
 import com.example.connectapp.data.models.SensorData
@@ -15,13 +15,11 @@ import com.example.connectapp.data.settings.AppSettings
 import com.example.connectapp.data.settings.LineEnding
 import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.service.ConnectionForegroundService
-import com.example.connectapp.utils.DataParser
 import com.example.connectapp.utils.LogBuffer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -46,13 +44,11 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
     private val logBuffer = LogBuffer()
     val log: StateFlow<String> = logBuffer.text
 
-    private val _sensorData = MutableStateFlow(SensorData())
-    val sensorData: StateFlow<SensorData> = _sensorData.asStateFlow()
+    private val processor = SensorStreamProcessor()
+    val sensorData: StateFlow<SensorData> = processor.sensorData
 
     private val _settings = MutableStateFlow(AppSettings.DEFAULT)
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
-
-    private val lineBuffer = StringBuilder()
 
     init {
         viewModelScope.launch {
@@ -61,7 +57,7 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             repo.incoming.collect { chunk ->
                 logBuffer.appendRaw(chunk, viewModelScope)
-                withContext(Dispatchers.Default) { parseChunk(chunk) }
+                withContext(Dispatchers.Default) { processor.process(chunk) }
             }
         }
         // Команды из MQTT/GraphActivity. target=null — broadcast (MQTT),
@@ -114,7 +110,7 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun connect(device: UsbDevice) {
         SensorDataBus.clear()
-        _sensorData.value = SensorData()
+        processor.reset()
         repo.connect(device, viewModelScope)
     }
 
@@ -144,38 +140,12 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearLog() {
         logBuffer.clear()
-        synchronized(lineBuffer) { lineBuffer.clear() }
-        _sensorData.value = SensorData()
+        processor.reset()
         SensorDataBus.clear()
     }
 
     fun setLineEnding(value: LineEnding) =
         viewModelScope.launch { settingsRepo.setLineEnding(value) }
-
-    private fun parseChunk(chunk: String) {
-        com.example.connectapp.utils.RrdLog.feedLine(chunk)
-        // synchronized — parseChunk на Dispatchers.Default, clearLog на Main.
-        val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
-        // Текстовые ответы платы (help/menu/calib/status) приходят без '\n'
-        // отдельными чанками — drainRecords (кадрировщик ТЕЛЕМЕТРИИ) их не
-        // выдаёт, поэтому консоль их не видела. Фидим CommandLog из сырья: каждая
-        // строка чанка, которую парсер НЕ распознал как телеметрию.
-        for (raw in normalised.split('\n')) {
-            val t = raw.trim()
-            if (t.isNotEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
-        }
-        val records = synchronized(lineBuffer) {
-            lineBuffer.append(normalised)
-            DataParser.drainRecords(lineBuffer)
-        }
-        for (line in records) {
-            val parsed = DataParser.parse(line) ?: continue
-            val merged = _sensorData.updateAndGet { it.merge(parsed) }
-            parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
-            parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
-            SensorDataBus.publishAccel(parsed, merged)
-        }
-    }
 
     override fun onCleared() {
         super.onCleared()
