@@ -57,11 +57,15 @@ class SettingsRepository(private val context: Context) {
             hexSendMode = prefs[KEY_HEX_SEND] ?: AppSettings.DEFAULT.hexSendMode,
             quickCommands = QuickCommand.decodeList(prefs[KEY_QUICK_CMDS]),
             sampleRateHz = prefs[KEY_SAMPLE_RATE_HZ] ?: AppSettings.DEFAULT.sampleRateHz,
+            accelSensitivityLsbPerG = prefs[KEY_ACCEL_SENS] ?: AppSettings.DEFAULT.accelSensitivityLsbPerG,
         )
     }
 
     suspend fun setSampleRateHz(value: Float) =
         context.settingsDataStore.edit { it[KEY_SAMPLE_RATE_HZ] = value }
+
+    suspend fun setAccelSensitivity(value: Float) =
+        context.settingsDataStore.edit { it[KEY_ACCEL_SENS] = value }
 
     suspend fun setAutoReconnect(value: Boolean) =
         context.settingsDataStore.edit { it[KEY_AUTO_RECONNECT] = value }
@@ -177,6 +181,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_HEX_SEND: Preferences.Key<Boolean> = booleanPreferencesKey("hex_send")
         private val KEY_QUICK_CMDS: Preferences.Key<String> = stringPreferencesKey("quick_commands")
         private val KEY_SAMPLE_RATE_HZ: Preferences.Key<Float> = floatPreferencesKey("sample_rate_hz")
+        private val KEY_ACCEL_SENS: Preferences.Key<Float> = floatPreferencesKey("accel_sens_lsb_per_g")
 
         // MQTT — отдельный неймспейс ключей (префикс mqtt_).
         // Пароль хранится plain в DataStore: для лабораторного использования
