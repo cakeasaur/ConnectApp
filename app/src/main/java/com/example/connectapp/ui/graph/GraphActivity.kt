@@ -714,8 +714,8 @@ private fun GraphScreen(
             )
 
             Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
-            TempStatsRow("T1", temp1)
-            TempStatsRow("T2", temp2)
+            StatsRow("T1", temp1, "°C")
+            StatsRow("T2", temp2, "°C")
             ChartCard(height = 220) {
                 NeonChart(
                     seriesList = listOf(
@@ -729,12 +729,15 @@ private fun GraphScreen(
                 )
             }
 
-            Text("${stringResource(R.string.label_accelerometer)} 1", style = MaterialTheme.typography.titleLarge)
+            Text("${stringResource(R.string.label_accelerometer)} 1 · LSB", style = MaterialTheme.typography.titleLarge)
             AxisFilterRow(
                 showX = showAx1, onShowXChange = { showAx1 = it },
                 showY = showAy1, onShowYChange = { showAy1 = it },
                 showZ = showAz1, onShowZChange = { showAz1 = it },
             )
+            if (showAx1) StatsRow("ax", a1x, "LSB")
+            if (showAy1) StatsRow("ay", a1y, "LSB")
+            if (showAz1) StatsRow("az", a1z, "LSB")
             ChartCard(height = 220) {
                 // Multi-axis: az → правая ось (диапазон ~900-1100 от гравитации),
                 // ax/ay → левая (±50). Без этого ax/ay сплющены в линию.
@@ -753,12 +756,15 @@ private fun GraphScreen(
                 )
             }
 
-            Text("${stringResource(R.string.label_accelerometer)} 2", style = MaterialTheme.typography.titleLarge)
+            Text("${stringResource(R.string.label_accelerometer)} 2 · LSB", style = MaterialTheme.typography.titleLarge)
             AxisFilterRow(
                 showX = showAx2, onShowXChange = { showAx2 = it },
                 showY = showAy2, onShowYChange = { showAy2 = it },
                 showZ = showAz2, onShowZChange = { showAz2 = it },
             )
+            if (showAx2) StatsRow("ax", a2x, "LSB")
+            if (showAy2) StatsRow("ay", a2y, "LSB")
+            if (showAz2) StatsRow("az", a2z, "LSB")
             ChartCard(height = 220) {
                 val a2Series = buildList {
                     if (showAx2) add(NeonSeries(a2x, accelColors[0], "ax", NeonAxis.LEFT))
@@ -911,12 +917,12 @@ private fun AxisFilterRow(
 }
 
 @Composable
-private fun TempStatsRow(label: String, points: List<TimedPoint>) {
+private fun StatsRow(label: String, points: List<TimedPoint>, unit: String) {
     if (points.isEmpty()) return
     val values = points.map { it.value }
     val mn = values.min(); val mx = values.max(); val avg = values.average()
     Text(
-        "$label: min %.2f / avg %.2f / max %.2f °C".format(Locale.ROOT, mn, avg, mx),
+        "$label: min %.2f / avg %.2f / max %.2f %s".format(Locale.ROOT, mn, avg, mx, unit),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )

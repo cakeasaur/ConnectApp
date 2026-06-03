@@ -43,6 +43,21 @@ fun Accel3DChart(
     var pitch by remember { mutableFloatStateOf(0.4f) }    // вращение вокруг X
     var scale by remember { mutableFloatStateOf(1f) }
 
+    // Авто-масштаб считаем один раз на новый набор данных, а НЕ в draw-скоупе
+    // на каждый кадр/жест: при pan/zoom данные не меняются. Без flatten() —
+    // тот аллоцировал три List<Float> на каждый recompose.
+    val dataKey = a1.xs.size + a1.zs.size + a2.xs.size + a2.zs.size +
+        (a1.xs.lastOrNull()?.t ?: 0L).toInt() + (a2.xs.lastOrNull()?.t ?: 0L).toInt()
+    val maxAbs = remember(dataKey) {
+        var m = 1f
+        for (tr in arrayOf(a1, a2)) {
+            for (lst in arrayOf(tr.xs, tr.ys, tr.zs)) {
+                for (p in lst) { val a = kotlin.math.abs(p.value); if (a > m) m = a }
+            }
+        }
+        m
+    }
+
     Canvas(
         modifier = modifier
             // Один pointerInput, который обрабатывает И вращение (1-палец pan),
@@ -59,8 +74,6 @@ fun Accel3DChart(
         val w = size.width; val h = size.height
         val cx = w / 2f; val cy = h / 2f
 
-        // Авто-масштаб: ищем максимальный модуль координаты среди обоих сенсоров.
-        val maxAbs = listOf(a1, a2).flatMap { it.flatten() }.maxOfOrNull { kotlin.math.abs(it) } ?: 1f
         val worldScale = (min(w, h) * 0.35f / max(maxAbs, 1f)) * scale
 
         // Проекционные параметры. focal в формуле сокращается — оставляем именно
