@@ -7,15 +7,20 @@ import android.bluetooth.BluetoothSocket
 import com.example.connectapp.utils.Constants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets
+
+/** Сколько ждём завершения сопряжения (ввод PIN пользователем) перед сдачей. */
+private const val BOND_TIMEOUT_MS = 25_000L
 
 /**
  * Bluetooth SPP client. Connects to a remote device using the standard
@@ -43,6 +48,12 @@ class BluetoothClient {
 
         // Discovery interferes with connection; cancel before connecting.
         runCatching { adapter.cancelDiscovery() }
+
+        // Авто-сопряжение. SPP-модули (HC-05/BOLUTEK) рвут RFCOMM без бонда
+        // ("Remote User Terminated" → read failed, ret -1). Если устройство не
+        // сопряжено — инициируем createBond() (всплывёт системный диалог PIN,
+        // обычно 1234/0000) и ждём завершения, прежде чем открывать сокет.
+        ensureBonded(device)
 
         // Fallback-цепочка. На части устройств (Xiaomi/MIUI + дешёвые SPP-модули
         // HC-05/06) стандартный secure-RFCOMM по UUID кидает "read failed, socket
@@ -75,6 +86,29 @@ class BluetoothClient {
             }
         }
         throw lastError ?: IllegalStateException("Bluetooth connect failed")
+    }
+
+    /**
+     * Гарантирует сопряжение перед коннектом. Если устройство уже BONDED — выходим
+     * сразу. Иначе запускаем [BluetoothDevice.createBond] (система покажет диалог
+     * ввода PIN) и поллим bondState до BONDED либо таймаута. Если за отведённое
+     * время не сопряглись — бросаем понятную ошибку вместо тихого SPP-сбоя.
+     */
+    @SuppressLint("MissingPermission")
+    private suspend fun ensureBonded(device: BluetoothDevice) {
+        if (device.bondState == BluetoothDevice.BOND_BONDED) return
+        if (device.bondState == BluetoothDevice.BOND_NONE) {
+            runCatching { device.createBond() }
+        }
+        val bonded = withTimeoutOrNull(BOND_TIMEOUT_MS) {
+            while (device.bondState != BluetoothDevice.BOND_BONDED) delay(300)
+            true
+        } ?: false
+        if (!bonded) {
+            throw IllegalStateException(
+                "Не удалось сопрячься с устройством — подтвердите PIN на телефоне и повторите"
+            )
+        }
     }
 
     /**
