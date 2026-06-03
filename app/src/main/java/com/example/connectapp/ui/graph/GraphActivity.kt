@@ -962,6 +962,10 @@ private fun HealthBanner(
         over("ax2", a2x, true) || over("ay2", a2y, true) || over("az2", a2z, true)
 
     val (text, bg) = when {
+        // Без единого порога судить не по чему — нейтральный статус, а не
+        // ложно-зелёная «НОРМА» (иначе пустая конфигурация выглядит как
+        // «проверено, всё хорошо»).
+        thresholds.isEmpty() -> "ПОРОГИ НЕ ЗАДАНЫ" to Color(0xFF607D8B)
         overheat && vibration -> "ПЕРЕГРЕВ + ВИБРАЦИЯ" to Color(0xFFD32F2F)
         overheat -> "ПЕРЕГРЕВ" to Color(0xFFD32F2F)
         vibration -> "ПОВЫШЕННАЯ ВИБРАЦИЯ" to Color(0xFFF57C00)
