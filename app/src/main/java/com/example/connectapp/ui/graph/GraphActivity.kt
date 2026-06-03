@@ -317,7 +317,23 @@ private fun GraphScreen(
     val a2yLive by SensorDataBus.accel2Y.collectAsStateWithLifecycle()
     val a2zLive by SensorDataBus.accel2Z.collectAsStateWithLifecycle()
 
-    var monitoring by remember { mutableStateOf(false) }
+    // «Идёт ли поток» определяем по факту прихода данных, а не локальным флагом:
+    // если последний отсчёт свежее 3 с — стрим активен. Кнопка честно отражает
+    // состояние, даже когда мониторинг запущен с BT-экрана. Тикер раз в секунду
+    // нужен, чтобы статус «протух» после остановки потока, когда новых данных нет.
+    var nowTick by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            nowTick = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val lastDataAt = maxOf(
+        temp1Live.lastOrNull()?.t ?: 0L, temp2Live.lastOrNull()?.t ?: 0L,
+        a1xLive.lastOrNull()?.t ?: 0L, a1yLive.lastOrNull()?.t ?: 0L, a1zLive.lastOrNull()?.t ?: 0L,
+        a2xLive.lastOrNull()?.t ?: 0L, a2yLive.lastOrNull()?.t ?: 0L, a2zLive.lastOrNull()?.t ?: 0L,
+    )
+    val monitoring = lastDataAt > 0L && nowTick - lastDataAt < 3000L
     var paused by remember { mutableStateOf(false) }
     // windowMs: 0L = "все" (без фильтра), иначе — длина окна в мс.
     // Заменили enum TimeWindow на непрерывное значение + zoom-кнопки —
@@ -554,7 +570,7 @@ private fun GraphScreen(
                     // обрывает только ESC, повторная команда не останавливает).
                     if (monitoring) CommandBus.send("\u001B", transport)
                     else CommandBus.send(cmdStart, transport)
-                    monitoring = !monitoring
+                    // Состояние кнопки не трогаем — оно производное от потока данных.
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
@@ -586,7 +602,6 @@ private fun GraphScreen(
                             CommandLog.append("→ log dump")
                             delay(300)
                             CommandBus.send(cmdDump, transport)
-                            monitoring = false
                         }
                     },
                     modifier = Modifier.weight(1f)
