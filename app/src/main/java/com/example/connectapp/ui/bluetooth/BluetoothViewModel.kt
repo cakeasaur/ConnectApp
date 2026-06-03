@@ -6,7 +6,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.BluetoothDeviceItem
 import com.example.connectapp.data.models.CommandBus
-import com.example.connectapp.data.models.CommandLog
+import com.example.connectapp.data.models.SensorStreamProcessor
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.GlobalConnectionStatus
 import com.example.connectapp.data.models.SensorData
@@ -19,7 +19,6 @@ import com.example.connectapp.data.settings.QuickCommand
 import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.service.ConnectionForegroundService
 import com.example.connectapp.utils.Constants
-import com.example.connectapp.utils.DataParser
 import com.example.connectapp.utils.HexCodec
 import com.example.connectapp.utils.LogBuffer
 import com.example.connectapp.utils.SessionRecorder
@@ -32,7 +31,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -56,8 +54,8 @@ class BluetoothViewModel(
     private val logBuffer = LogBuffer(initial = handle.get<String>(KEY_LOG).orEmpty())
     val log: StateFlow<String> = logBuffer.text
 
-    private val _sensorData = MutableStateFlow(SensorData())
-    val sensorData: StateFlow<SensorData> = _sensorData.asStateFlow()
+    private val processor = SensorStreamProcessor()
+    val sensorData: StateFlow<SensorData> = processor.sensorData
 
     private val _settings = MutableStateFlow(AppSettings.DEFAULT)
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -66,7 +64,6 @@ class BluetoothViewModel(
         get() = handle.get<String>(KEY_ADDRESS)
         set(value) { handle[KEY_ADDRESS] = value }
 
-    private val lineBuffer = StringBuilder()
     private var saveLogJob: Job? = null
     private var autoReconnectTried = false
 
@@ -82,7 +79,7 @@ class BluetoothViewModel(
                 scheduleSave()
                 recorder.appendChunk(chunk) // уже сам уходит на IO-scope.
                 // Парсер с регэкспами — CPU-bound, не блокируем UI-поток.
-                withContext(Dispatchers.Default) { parseChunk(chunk) }
+                withContext(Dispatchers.Default) { processor.process(chunk) }
             }
         }
         // Forward commands posted from GraphActivity (or any other screen).
@@ -168,7 +165,7 @@ class BluetoothViewModel(
         // склейку «доска A → доска B» с монотонно растущими timestamps,
         // и пользователь подумает что это один непрерывный поток.
         SensorDataBus.clear()
-        _sensorData.value = SensorData()
+        processor.reset()
         viewModelScope.launch {
             repo.connect(address, viewModelScope)
         }
@@ -283,10 +280,7 @@ class BluetoothViewModel(
         saveLogJob?.cancel()
         logBuffer.clear()
         handle[KEY_LOG] = ""
-        // lineBuffer читается из parseChunk на Dispatchers.Default — синхрон
-        // обязателен, иначе ConcurrentModificationException.
-        synchronized(lineBuffer) { lineBuffer.clear() }
-        _sensorData.value = SensorData()
+        processor.reset()
         SensorDataBus.clear()
     }
 
@@ -410,38 +404,6 @@ class BluetoothViewModel(
             delay(Constants.LOG_SAVE_DEBOUNCE_MS)
             logBuffer.flush()
             handle[KEY_LOG] = logBuffer.text.value
-        }
-    }
-
-    /**
-     * Накапливает входящие байты в [lineBuffer], извлекает законченные строки,
-     * парсит и публикует значения в [SensorDataBus].
-     *
-     * Работа с [lineBuffer] под synchronized — [clearLog] чистит его с Main,
-     * а этот метод бежит на Dispatchers.Default. StringBuilder не thread-safe.
-     */
-    private fun parseChunk(chunk: String) {
-        com.example.connectapp.utils.RrdLog.feedLine(chunk)
-        // Нормализуем переводы строк: некоторые прошивки шлют только '\r'.
-        val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
-        // Текстовые ответы платы (help/menu/calib/status) приходят без '\n'
-        // отдельными чанками — drainRecords (кадрировщик ТЕЛЕМЕТРИИ) их не
-        // выдаёт, поэтому консоль их не видела. Фидим CommandLog из сырья: каждая
-        // строка чанка, которую парсер НЕ распознал как телеметрию.
-        for (raw in normalised.split('\n')) {
-            val t = raw.trim()
-            if (t.isNotEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
-        }
-        val records = synchronized(lineBuffer) {
-            lineBuffer.append(normalised)
-            DataParser.drainRecords(lineBuffer)
-        }
-        for (line in records) {
-            val parsed = DataParser.parse(line) ?: continue
-            val merged = _sensorData.updateAndGet { it.merge(parsed) }
-            parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
-            parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
-            SensorDataBus.publishAccel(parsed, merged)
         }
     }
 

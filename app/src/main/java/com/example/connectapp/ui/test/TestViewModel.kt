@@ -5,9 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.connectapp.data.models.SensorData
 import com.example.connectapp.data.models.CommandBus
-import com.example.connectapp.data.models.CommandLog
 import com.example.connectapp.data.models.SensorDataBus
-import com.example.connectapp.utils.DataParser
+import com.example.connectapp.data.models.SensorStreamProcessor
 import com.example.connectapp.utils.FileReplaySource
 import com.example.connectapp.utils.LogBuffer
 import com.example.connectapp.utils.MockDataSource
@@ -17,7 +16,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -33,8 +31,8 @@ class TestViewModel(
     private val logBuffer = LogBuffer()
     val log: StateFlow<String> = logBuffer.text
 
-    private val _sensorData = MutableStateFlow(SensorData())
-    val sensorData: StateFlow<SensorData> = _sensorData.asStateFlow()
+    private val processor = SensorStreamProcessor()
+    val sensorData: StateFlow<SensorData> = processor.sensorData
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
@@ -42,7 +40,6 @@ class TestViewModel(
     private val _lastPacketAt = MutableStateFlow<Long?>(null)
     val lastPacketAt: StateFlow<Long?> = _lastPacketAt.asStateFlow()
 
-    private val lineBuffer = StringBuilder()
     private var streamJob: Job? = null
 
     /**
@@ -83,7 +80,7 @@ class TestViewModel(
     private fun injectFromBoard(text: String) {
         logBuffer.appendRaw(text, viewModelScope)
         _lastPacketAt.value = System.currentTimeMillis()
-        viewModelScope.launch(Dispatchers.Default) { parseChunk(text) }
+        viewModelScope.launch(Dispatchers.Default) { processor.process(text) }
     }
 
     fun toggle() {
@@ -96,8 +93,7 @@ class TestViewModel(
         // прилепится к данным прошлой сессии (или к данным BT, если кто-то
         // случайно запустил оба источника).
         SensorDataBus.clear()
-        lineBuffer.clear()
-        _sensorData.value = SensorData()
+        processor.reset()
         _running.value = true
         // Выбор источника: replay-файл или mock-генератор.
         val source: Flow<String> = replayFile?.let { FileReplaySource.stream(it) }
@@ -106,7 +102,7 @@ class TestViewModel(
             source.collect { chunk ->
                 logBuffer.appendRaw(chunk, viewModelScope)
                 _lastPacketAt.value = System.currentTimeMillis()
-                withContext(Dispatchers.Default) { parseChunk(chunk) }
+                withContext(Dispatchers.Default) { processor.process(chunk) }
             }
             // Replay завершился (файл кончился) — переводим в stopped.
             _running.value = false
@@ -121,35 +117,8 @@ class TestViewModel(
 
     fun clearLog() {
         logBuffer.clear()
-        synchronized(lineBuffer) { lineBuffer.clear() }
-        _sensorData.value = SensorData()
+        processor.reset()
         SensorDataBus.clear()
-    }
-
-    private fun parseChunk(chunk: String) {
-        com.example.connectapp.utils.RrdLog.feedLine(chunk)
-        // synchronized — parseChunk бежит на Dispatchers.Default, а clearLog
-        // с Main. StringBuilder не thread-safe.
-        val normalised = chunk.replace("\r\n", "\n").replace('\r', '\n')
-        // Текстовые ответы платы (help/menu/calib/status) приходят без '\n'
-        // отдельными чанками — drainRecords (кадрировщик ТЕЛЕМЕТРИИ) их не
-        // выдаёт, поэтому консоль их не видела. Фидим CommandLog из сырья: каждая
-        // строка чанка, которую парсер НЕ распознал как телеметрию.
-        for (raw in normalised.split('\n')) {
-            val t = raw.trim()
-            if (t.isNotEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
-        }
-        val records = synchronized(lineBuffer) {
-            lineBuffer.append(normalised)
-            DataParser.drainRecords(lineBuffer)
-        }
-        for (line in records) {
-            val parsed = DataParser.parse(line) ?: continue
-            val merged = _sensorData.updateAndGet { it.merge(parsed) }
-            parsed.temperature1?.let { SensorDataBus.addTemperature(slot = 1, value = it) }
-            parsed.temperature2?.let { SensorDataBus.addTemperature(slot = 2, value = it) }
-            SensorDataBus.publishAccel(parsed, merged)
-        }
     }
 
     override fun onCleared() {
