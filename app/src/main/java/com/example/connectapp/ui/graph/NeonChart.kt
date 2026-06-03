@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.math.Fft
 import com.example.connectapp.utils.PerfTrace
+import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -87,6 +88,11 @@ data class NeonChartConfig(
     val phaseLock: Boolean = false,
     /** Частота дискретизации для FFT в phase-lock режиме. */
     val sampleRateHz: Float = 10f,
+    /**
+     * Подписи оси X абсолютным временем (HH:mm:ss) вместо относительных секунд.
+     * Нужно для сопоставления выбросов с журналом событий RRD по времени.
+     */
+    val absoluteTime: Boolean = false,
 )
 
 /**
@@ -402,6 +408,9 @@ private fun computeBounds(
  */
 private const val PAD_LEFT_MIN = 90f   // fallback если density < 2
 private const val PAD_RIGHT_BASE = 12f
+
+// Формат меток оси X в режиме абсолютного времени (config.absoluteTime).
+private val absTimeFmt = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
 private const val PAD_RIGHT_AXIS_MIN = 72f
 private const val PAD_TOP = 24f
 private const val PAD_BOTTOM = 24f
@@ -449,15 +458,30 @@ private fun DrawScope.drawNeonChart(
     drawAxisLabelsY(bounds.left, plotL - 4f, plotT, plotB, hDiv, right = false)
     bounds.right?.let { drawAxisLabelsY(it, plotR + 4f, plotT, plotB, hDiv, right = true) }
 
-    // 3. X-axis labels (4 ticks).
-    val seconds = (lastT - firstT) / 1000f
-    val useDecimal = seconds < 10f
-    for (i in 0..vDiv) {
-        val x = plotL + plotW * i / vDiv
-        val t = firstT + tRange * i / vDiv
-        val sec = (t - firstT) / 1000f
-        val txt = if (useDecimal) "%.1fs".format(Locale.ROOT, sec) else "${sec.toInt()}s"
-        drawText(txt, x, plotB + 14f, alignCenter = true)
+    // 3. X-axis labels.
+    if (config.absoluteTime) {
+        // Абсолютное время HH:mm:ss. Метки шире относительных секунд, поэтому
+        // рисуем только три (начало/середина/конец) с краевым выравниванием —
+        // иначе 6 timestamp'ов наезжают друг на друга и клипаются у краёв.
+        for (i in intArrayOf(0, vDiv / 2, vDiv)) {
+            val t = firstT + tRange * i / vDiv
+            val txt = absTimeFmt.format(java.util.Date(t))
+            when (i) {
+                0 -> drawText(txt, plotL, plotB + 14f)
+                vDiv -> drawText(txt, plotR, plotB + 14f, alignRight = true)
+                else -> drawText(txt, plotL + plotW * i / vDiv, plotB + 14f, alignCenter = true)
+            }
+        }
+    } else {
+        val seconds = (lastT - firstT) / 1000f
+        val useDecimal = seconds < 10f
+        for (i in 0..vDiv) {
+            val x = plotL + plotW * i / vDiv
+            val t = firstT + tRange * i / vDiv
+            val sec = (t - firstT) / 1000f
+            val txt = if (useDecimal) "%.1fs".format(Locale.ROOT, sec) else "${sec.toInt()}s"
+            drawText(txt, x, plotB + 14f, alignCenter = true)
+        }
     }
 
     // 4. Per-series drawing (envelope → sigma → line → current point).

@@ -67,6 +67,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -86,6 +88,7 @@ import com.example.connectapp.data.models.CommandBus
 import com.example.connectapp.data.models.CommandLog
 import com.example.connectapp.ui.wifi.LogView
 import com.example.connectapp.utils.stripAnsi
+import com.example.connectapp.utils.AlertEngine
 import com.example.connectapp.data.models.SensorDataBus
 import com.example.connectapp.data.models.TimedPoint
 import com.example.connectapp.ui.theme.AppThemeWithSettings
@@ -93,6 +96,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 class GraphActivity : ComponentActivity() {
 
@@ -324,6 +328,7 @@ private fun GraphScreen(
     var showEnvelope by remember { mutableStateOf(false) }
     var showSigma by remember { mutableStateOf(false) }
     var showThreshold by remember { mutableStateOf(false) }
+    var absoluteTime by rememberSaveable { mutableStateOf(false) }
     var phaseLock by remember { mutableStateOf(false) }
     // Видимость осей акселерометров — пользователь сам решает что показывать.
     // По умолчанию все включены. rememberSaveable: переживают rotation/конфиг.
@@ -665,6 +670,12 @@ private fun GraphScreen(
                     colors = chipColors
                 )
                 FilterChip(
+                    selected = absoluteTime,
+                    onClick = { absoluteTime = !absoluteTime },
+                    label = { Text(if (absoluteTime) "время" else "время отн.") },
+                    colors = chipColors
+                )
+                FilterChip(
                     selected = phaseLock,
                     onClick = { phaseLock = !phaseLock },
                     label = { Text("phase-lock") },
@@ -694,6 +705,7 @@ private fun GraphScreen(
                     NeonThreshold(28f, "overheat", Color(0xFFFFAA00))
                 ) else emptyList(),
                 phaseLock = phaseLock,
+                absoluteTime = absoluteTime,
             )
             val accelConfig = NeonChartConfig(
                 showEnvelope = showEnvelope,
@@ -702,6 +714,16 @@ private fun GraphScreen(
                     NeonThreshold(1100f, "vibration", Color(0xFFFF8800), NeonAxis.RIGHT)
                 ) else emptyList(),
                 phaseLock = phaseLock,
+                absoluteTime = absoluteTime,
+            )
+
+            // Сводный вердикт по порогам AlertEngine — человекочитаемый статус
+            // вместо чтения сырых линий. Источник порогов тот же, что красит
+            // числа в карточке ниже, так что баннер и цифры согласованы.
+            HealthBanner(
+                temp1 = temp1, temp2 = temp2,
+                a1x = a1x, a1y = a1y, a1z = a1z,
+                a2x = a2x, a2y = a2y, a2z = a2z,
             )
 
             // Текущие значения всех каналов крупными цифрами — сразу видно состояние
@@ -912,6 +934,51 @@ private fun AxisFilterRow(
             selected = showZ,
             onClick = { onShowZChange(!showZ) },
             label = { Text("az", style = MaterialTheme.typography.labelMedium) }
+        )
+    }
+}
+
+/**
+ * Сводный статус «здоровья» платы по порогам [AlertEngine]. Темп — знаковое
+ * сравнение (перегрев вверх), accel — по модулю (вибрация в обе стороны), как
+ * в [AlertEngine.check]. Если порог канала не задан — он не участвует в вердикте.
+ */
+@Composable
+private fun HealthBanner(
+    temp1: List<TimedPoint>, temp2: List<TimedPoint>,
+    a1x: List<TimedPoint>, a1y: List<TimedPoint>, a1z: List<TimedPoint>,
+    a2x: List<TimedPoint>, a2y: List<TimedPoint>, a2z: List<TimedPoint>,
+) {
+    val thresholds by AlertEngine.thresholds.collectAsStateWithLifecycle()
+
+    fun over(key: String, pts: List<TimedPoint>, accel: Boolean): Boolean {
+        val thr = thresholds[key] ?: return false
+        val v = pts.lastOrNull()?.value ?: return false
+        return (if (accel) abs(v) else v) > thr
+    }
+
+    val overheat = over("t1", temp1, false) || over("t2", temp2, false)
+    val vibration = over("ax1", a1x, true) || over("ay1", a1y, true) || over("az1", a1z, true) ||
+        over("ax2", a2x, true) || over("ay2", a2y, true) || over("az2", a2z, true)
+
+    val (text, bg) = when {
+        overheat && vibration -> "ПЕРЕГРЕВ + ВИБРАЦИЯ" to Color(0xFFD32F2F)
+        overheat -> "ПЕРЕГРЕВ" to Color(0xFFD32F2F)
+        vibration -> "ПОВЫШЕННАЯ ВИБРАЦИЯ" to Color(0xFFF57C00)
+        else -> "НОРМА" to Color(0xFF2E7D32)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = bg),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
         )
     }
 }
