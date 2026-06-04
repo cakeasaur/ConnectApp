@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -94,6 +95,8 @@ data class NeonChartConfig(
      * Нужно для сопоставления выбросов с журналом событий RRD по времени.
      */
     val absoluteTime: Boolean = false,
+    /** Помечать точку максимального |значения| в окне колечком и подписью. */
+    val showPeaks: Boolean = false,
 )
 
 /**
@@ -518,6 +521,7 @@ private fun DrawScope.drawNeonChart(
         if (config.showSigma) drawSigma(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
         drawSeriesLine(s, ab, firstT, lastT, ::xPx, ::yPx, alertY, linePath)
         drawCurrentPoint(s, ab, ::xPx, ::yPx, alertY)
+        if (config.showPeaks) drawPeak(s, ab, firstT, lastT, ::xPx, ::yPx, plotT)
     }
 
     // 5. Threshold lines.
@@ -739,6 +743,32 @@ private fun buildSmoothPath(
         path.lineTo(firstX, closeBottomY)
         path.close()
     }
+}
+
+/**
+ * Аннотация пика: точка максимального |значения| серии в окне — колечко +
+ * подпись значения над ней. Для вибрации это самый информативный маркер.
+ */
+private fun DrawScope.drawPeak(
+    s: NeonSeries,
+    ab: AxisBounds,
+    firstT: Long, lastT: Long,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+    plotT: Float,
+) {
+    var peak: TimedPoint? = null
+    var peakAbs = -1f
+    for (p in s.data) {
+        if (p.t < firstT || p.t > lastT) continue
+        val a = abs(p.value)
+        if (a > peakAbs) { peakAbs = a; peak = p }
+    }
+    val pk = peak ?: return
+    val x = xPx(pk.t)
+    val y = yPx(pk.value, ab)
+    drawCircle(s.color, radius = 5f, center = Offset(x, y), style = Stroke(width = 1.5f))
+    drawText(formatTick(pk.value), x, (y - 8f).coerceAtLeast(plotT + 9f), alignCenter = true, color = s.color)
 }
 
 private fun DrawScope.drawCurrentPoint(

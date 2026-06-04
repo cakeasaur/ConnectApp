@@ -346,6 +346,7 @@ private fun GraphScreen(
     var showThreshold by remember { mutableStateOf(false) }
     var absoluteTime by rememberSaveable { mutableStateOf(false) }
     var accelInG by rememberSaveable { mutableStateOf(false) }
+    var showPeaks by rememberSaveable { mutableStateOf(false) }
     var phaseLock by remember { mutableStateOf(false) }
     // Видимость осей акселерометров — пользователь сам решает что показывать.
     // По умолчанию все включены. rememberSaveable: переживают rotation/конфиг.
@@ -710,6 +711,12 @@ private fun GraphScreen(
                     colors = chipColors
                 )
                 FilterChip(
+                    selected = showPeaks,
+                    onClick = { showPeaks = !showPeaks },
+                    label = { Text("пики") },
+                    colors = chipColors
+                )
+                FilterChip(
                     selected = phaseLock,
                     onClick = { phaseLock = !phaseLock },
                     label = { Text("phase-lock") },
@@ -740,6 +747,7 @@ private fun GraphScreen(
                 ) else emptyList(),
                 phaseLock = phaseLock,
                 absoluteTime = absoluteTime,
+                showPeaks = showPeaks,
             )
             val vibThreshold = if (accelInG && accelSens > 0f) 1100f / accelSens else 1100f
             val accelConfig = NeonChartConfig(
@@ -750,6 +758,7 @@ private fun GraphScreen(
                 ) else emptyList(),
                 phaseLock = phaseLock,
                 absoluteTime = absoluteTime,
+                showPeaks = showPeaks,
             )
 
             // Сводный вердикт по порогам AlertEngine — человекочитаемый статус
