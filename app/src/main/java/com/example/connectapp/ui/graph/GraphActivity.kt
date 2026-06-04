@@ -319,6 +319,12 @@ private fun GraphScreen(
     val a2zLive by SensorDataBus.accel2Z.collectAsStateWithLifecycle()
     val dynIds by SensorDataBus.dynamicIds.collectAsStateWithLifecycle()
 
+    // Прячем фиксированные карточки, по которым плата не прислала данных —
+    // плата иной формы (без temp/accel) не показывает пустые графики.
+    val hasTemp = temp1Live.isNotEmpty() || temp2Live.isNotEmpty()
+    val hasA1 = a1xLive.isNotEmpty() || a1yLive.isNotEmpty() || a1zLive.isNotEmpty()
+    val hasA2 = a2xLive.isNotEmpty() || a2yLive.isNotEmpty() || a2zLive.isNotEmpty()
+
     // «Идёт ли поток» определяем по факту прихода данных, а не локальным флагом:
     // если последний отсчёт свежее 3 с — стрим активен. Кнопка честно отражает
     // состояние, даже когда мониторинг запущен с BT-экрана. Тикер раз в секунду
@@ -782,71 +788,77 @@ private fun GraphScreen(
                 accelInG = accelInG, accelSensitivity = accelSens,
             )
 
-            Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
-            StatsRow("T1", temp1, "°C")
-            StatsRow("T2", temp2, "°C")
-            ChartCard(height = 220) {
-                NeonChart(
-                    seriesList = listOf(
-                        NeonSeries(temp1, tempColors[0], "T1"),
-                        NeonSeries(temp2, tempColors[1], "T2"),
-                    ),
-                    config = tempConfig,
-                    zoom = zoom,
-                    crosshair = crosshair,
-                    modifier = Modifier.fillMaxSize()
-                )
+            if (hasTemp) {
+                Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
+                StatsRow("T1", temp1, "°C")
+                StatsRow("T2", temp2, "°C")
+                ChartCard(height = 220) {
+                    NeonChart(
+                        seriesList = listOf(
+                            NeonSeries(temp1, tempColors[0], "T1"),
+                            NeonSeries(temp2, tempColors[1], "T2"),
+                        ),
+                        config = tempConfig,
+                        zoom = zoom,
+                        crosshair = crosshair,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
-            Text("${stringResource(R.string.label_accelerometer)} 1 · $accelUnit", style = MaterialTheme.typography.titleLarge)
-            AxisFilterRow(
-                showX = showAx1, onShowXChange = { showAx1 = it },
-                showY = showAy1, onShowYChange = { showAy1 = it },
-                showZ = showAz1, onShowZChange = { showAz1 = it },
-            )
-            if (showAx1) StatsRow("ax", a1xD, accelUnit)
-            if (showAy1) StatsRow("ay", a1yD, accelUnit)
-            if (showAz1) StatsRow("az", a1zD, accelUnit)
-            ChartCard(height = 220) {
-                // Multi-axis: az → правая ось (диапазон ~900-1100 от гравитации),
-                // ax/ay → левая (±50). Без этого ax/ay сплющены в линию.
-                // Фильтруем по чекбоксам — если ось выключена, серия не добавляется.
-                val a1Series = buildList {
-                    if (showAx1) add(NeonSeries(a1xD, accelColors[0], "ax", NeonAxis.LEFT))
-                    if (showAy1) add(NeonSeries(a1yD, accelColors[1], "ay", NeonAxis.LEFT))
-                    if (showAz1) add(NeonSeries(a1zD, accelColors[2], "az", NeonAxis.RIGHT))
-                }
-                NeonChart(
-                    seriesList = a1Series,
-                    config = accelConfig,
-                    zoom = zoom,
-                    crosshair = crosshair,
-                    modifier = Modifier.fillMaxSize()
+            if (hasA1) {
+                Text("${stringResource(R.string.label_accelerometer)} 1 · $accelUnit", style = MaterialTheme.typography.titleLarge)
+                AxisFilterRow(
+                    showX = showAx1, onShowXChange = { showAx1 = it },
+                    showY = showAy1, onShowYChange = { showAy1 = it },
+                    showZ = showAz1, onShowZChange = { showAz1 = it },
                 )
+                if (showAx1) StatsRow("ax", a1xD, accelUnit)
+                if (showAy1) StatsRow("ay", a1yD, accelUnit)
+                if (showAz1) StatsRow("az", a1zD, accelUnit)
+                ChartCard(height = 220) {
+                    // Multi-axis: az → правая ось (диапазон ~900-1100 от гравитации),
+                    // ax/ay → левая (±50). Без этого ax/ay сплющены в линию.
+                    // Фильтруем по чекбоксам — если ось выключена, серия не добавляется.
+                    val a1Series = buildList {
+                        if (showAx1) add(NeonSeries(a1xD, accelColors[0], "ax", NeonAxis.LEFT))
+                        if (showAy1) add(NeonSeries(a1yD, accelColors[1], "ay", NeonAxis.LEFT))
+                        if (showAz1) add(NeonSeries(a1zD, accelColors[2], "az", NeonAxis.RIGHT))
+                    }
+                    NeonChart(
+                        seriesList = a1Series,
+                        config = accelConfig,
+                        zoom = zoom,
+                        crosshair = crosshair,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
-            Text("${stringResource(R.string.label_accelerometer)} 2 · $accelUnit", style = MaterialTheme.typography.titleLarge)
-            AxisFilterRow(
-                showX = showAx2, onShowXChange = { showAx2 = it },
-                showY = showAy2, onShowYChange = { showAy2 = it },
-                showZ = showAz2, onShowZChange = { showAz2 = it },
-            )
-            if (showAx2) StatsRow("ax", a2xD, accelUnit)
-            if (showAy2) StatsRow("ay", a2yD, accelUnit)
-            if (showAz2) StatsRow("az", a2zD, accelUnit)
-            ChartCard(height = 220) {
-                val a2Series = buildList {
-                    if (showAx2) add(NeonSeries(a2xD, accelColors[0], "ax", NeonAxis.LEFT))
-                    if (showAy2) add(NeonSeries(a2yD, accelColors[1], "ay", NeonAxis.LEFT))
-                    if (showAz2) add(NeonSeries(a2zD, accelColors[2], "az", NeonAxis.RIGHT))
-                }
-                NeonChart(
-                    seriesList = a2Series,
-                    config = accelConfig,
-                    zoom = zoom,
-                    crosshair = crosshair,
-                    modifier = Modifier.fillMaxSize()
+            if (hasA2) {
+                Text("${stringResource(R.string.label_accelerometer)} 2 · $accelUnit", style = MaterialTheme.typography.titleLarge)
+                AxisFilterRow(
+                    showX = showAx2, onShowXChange = { showAx2 = it },
+                    showY = showAy2, onShowYChange = { showAy2 = it },
+                    showZ = showAz2, onShowZChange = { showAz2 = it },
                 )
+                if (showAx2) StatsRow("ax", a2xD, accelUnit)
+                if (showAy2) StatsRow("ay", a2yD, accelUnit)
+                if (showAz2) StatsRow("az", a2zD, accelUnit)
+                ChartCard(height = 220) {
+                    val a2Series = buildList {
+                        if (showAx2) add(NeonSeries(a2xD, accelColors[0], "ax", NeonAxis.LEFT))
+                        if (showAy2) add(NeonSeries(a2yD, accelColors[1], "ay", NeonAxis.LEFT))
+                        if (showAz2) add(NeonSeries(a2zD, accelColors[2], "az", NeonAxis.RIGHT))
+                    }
+                    NeonChart(
+                        seriesList = a2Series,
+                        config = accelConfig,
+                        zoom = zoom,
+                        crosshair = crosshair,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
             // Динамические каналы — авто-детект произвольных меток с платы
@@ -857,8 +869,12 @@ private fun GraphScreen(
                     key(id) {
                         val live by (SensorDataBus.dynamicFlow(id) ?: emptyFlow).collectAsStateWithLifecycle()
                         val pts = remember(live, windowMs) { applyWindow(live, windowMs) }
-                        Text(id, style = MaterialTheme.typography.titleMedium)
-                        if (pts.isNotEmpty()) StatsRow(id, pts, "")
+                        val unit = dynUnit(id)
+                        Text(
+                            if (unit.isEmpty()) id else "$id · $unit",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        if (pts.isNotEmpty()) StatsRow(id, pts, unit)
                         ChartCard(height = 180) {
                             NeonChart(
                                 seriesList = listOf(NeonSeries(pts, dynColor(id), id)),
@@ -875,34 +891,39 @@ private fun GraphScreen(
                 }
             }
 
-            Text("3D облако акселерометров", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "A1 красным, A2 синим. Перетаскивай — вращай, pinch — зум.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            ChartCard(height = 320) {
-                Accel3DChart(
-                    a1 = AccelTriple(a1x, a1y, a1z),
-                    a2 = AccelTriple(a2x, a2y, a2z),
-                    modifier = Modifier.fillMaxSize()
+            if (hasA1 || hasA2) {
+                Text("3D облако акселерометров", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "A1 красным, A2 синим. Перетаскивай — вращай, pinch — зум.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                ChartCard(height = 320) {
+                    Accel3DChart(
+                        a1 = AccelTriple(a1x, a1y, a1z),
+                        a2 = AccelTriple(a2x, a2y, a2z),
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
-            // Раздел "Математический анализ" получает те же отфильтрованные
-            // данные что и графики выше — pause/window применяются единообразно.
-            // generation = ключ для stateful-математики (Kalman): инкрементится
-            // в SensorDataBus.clear(), на новом значении сбрасываем накопленный
-            // state, иначе Kalman продолжит "помнить" удалённые отсчёты.
-            val generation by SensorDataBus.generation.collectAsStateWithLifecycle()
-            MathSection(
-                t1 = temp1, t2 = temp2,
-                a1x = a1x, a1y = a1y, a1z = a1z,
-                a2x = a2x, a2y = a2y,
-                generation = generation,
-                advanced = advancedMath,
-                sampleRateHz = sampleRateHz,
-            )
+            // Математический анализ (тепловой поток, вибрация, наклон, FFT) завязан
+            // на temp/accel — для платы без них он бессмыслен, поэтому скрываем.
+            if (hasTemp || hasA1 || hasA2) {
+                // Те же отфильтрованные данные что и графики выше — pause/window
+                // применяются единообразно. generation = ключ для stateful-математики
+                // (Kalman): инкрементится в clear(), на новом значении сбрасываем
+                // накопленный state, иначе Kalman "помнит" удалённые отсчёты.
+                val generation by SensorDataBus.generation.collectAsStateWithLifecycle()
+                MathSection(
+                    t1 = temp1, t2 = temp2,
+                    a1x = a1x, a1y = a1y, a1z = a1z,
+                    a2x = a2x, a2y = a2y,
+                    generation = generation,
+                    advanced = advancedMath,
+                    sampleRateHz = sampleRateHz,
+                )
+            }
         }
             // Встроенная консоль внизу: лог текстовых ответов платы + ввод команд.
             CommandConsole(transport = transport)
@@ -1074,6 +1095,25 @@ private val dynPalette = listOf(
 
 /** Стабильный цвет динамического канала по его id. */
 private fun dynColor(id: String) = dynPalette[(id.hashCode() and 0x7fffffff) % dynPalette.size]
+
+/**
+ * Единица измерения динамического канала по его имени (эвристика для частых
+ * имён). Неизвестное имя → без единицы. В слое 2 (профили) будет настраиваться.
+ */
+private fun dynUnit(id: String): String {
+    val k = id.lowercase()
+    return when {
+        k.startsWith("vbat") || k.startsWith("volt") || k == "v" || k == "vcc" -> "В"
+        k.startsWith("rpm") -> "об/мин"
+        k.startsWith("press") -> "гПа"
+        k.startsWith("curr") || k == "i" || k.startsWith("amp") -> "А"
+        k.startsWith("rssi") -> "dBm"
+        k.startsWith("freq") || k == "hz" -> "Гц"
+        k.startsWith("hum") -> "%"
+        k.startsWith("alt") -> "м"
+        else -> ""
+    }
+}
 
 @Composable
 private fun StatsRow(label: String, points: List<TimedPoint>, unit: String) {
