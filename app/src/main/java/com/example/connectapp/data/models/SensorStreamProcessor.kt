@@ -42,8 +42,12 @@ class SensorStreamProcessor {
             // нестандартным набором сенсоров. Публикуем в динамическую шину.
             val dyn = DataParser.parseDynamicChannels(t)
             for ((id, v) in dyn) SensorDataBus.addDynamic(id, v)
-            // Текст (не телеметрия и не именованный канал) → в консоль.
-            if (dyn.isEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
+            // Текст (не телеметрия и не именованный канал) → в консоль + парсер
+            // help-команд (для авто-чипов команд конкретной прошивки).
+            if (dyn.isEmpty() && DataParser.parse(t) == null) {
+                CommandLog.appendIfText(t)
+                com.example.connectapp.utils.HelpCommands.feed(t)
+            }
         }
 
         val records = synchronized(lineBuffer) {
@@ -63,5 +67,7 @@ class SensorStreamProcessor {
     fun reset() {
         synchronized(lineBuffer) { lineBuffer.setLength(0) }
         _sensorData.value = SensorData()
+        // Новая сессия может быть другой платой — сбрасываем распознанные команды.
+        com.example.connectapp.utils.HelpCommands.clear()
     }
 }

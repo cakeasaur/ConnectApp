@@ -940,18 +940,20 @@ private fun GraphScreen(
  * ([CommandLog]) + поле ввода команды. Отправка идёт через [CommandBus] на
  * активный транспорт; отправленная команда эхо-логируется как "→ cmd".
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CommandConsole(transport: String) {
     val log by CommandLog.text.collectAsStateWithLifecycle()
+    val helpCmds by com.example.connectapp.utils.HelpCommands.commands.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
 
-    fun send() {
-        val cmd = input.trim()
-        if (cmd.isEmpty()) return
-        CommandBus.send(cmd, transport)
-        CommandLog.append("→ $cmd")
-        input = ""
+    fun sendCmd(cmd: String) {
+        val c = cmd.trim()
+        if (c.isEmpty()) return
+        CommandBus.send(c, transport)
+        CommandLog.append("→ $c")
     }
+    fun send() { sendCmd(input); input = "" }
 
     Column(
         modifier = Modifier
@@ -978,6 +980,21 @@ private fun CommandConsole(transport: String) {
                 )
             } else {
                 LogView(log = stripAnsi(log), modifier = Modifier.fillMaxSize(), autoScroll = true)
+            }
+        }
+        // Авто-чипы команд, распознанных из вывода `help` платы. Тап — отправка.
+        if (helpCmds.isNotEmpty()) {
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                helpCmds.forEach { cmd ->
+                    androidx.compose.material3.AssistChip(
+                        onClick = { sendCmd(cmd) },
+                        label = { Text(cmd, maxLines = 1) }
+                    )
+                }
             }
         }
         Row(
