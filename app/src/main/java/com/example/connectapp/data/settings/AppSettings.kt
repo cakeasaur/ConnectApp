@@ -37,6 +37,10 @@ data class AppSettings(
      * ось az покоится ~1000 LSB при 1g (гравитация). Настраивается под датчик.
      */
     val accelSensitivityLsbPerG: Float = 1000f,
+    /** Сохранённые профили плат (именованные наборы настроек). */
+    val boardProfiles: List<BoardProfile> = emptyList(),
+    /** Имя активного профиля, либо null если ни один не выбран. */
+    val activeProfile: String? = null,
 ) {
     companion object {
         val DEFAULT = AppSettings()

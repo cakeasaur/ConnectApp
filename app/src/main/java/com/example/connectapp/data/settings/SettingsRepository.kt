@@ -58,6 +58,8 @@ class SettingsRepository(private val context: Context) {
             quickCommands = QuickCommand.decodeList(prefs[KEY_QUICK_CMDS]),
             sampleRateHz = prefs[KEY_SAMPLE_RATE_HZ] ?: AppSettings.DEFAULT.sampleRateHz,
             accelSensitivityLsbPerG = prefs[KEY_ACCEL_SENS] ?: AppSettings.DEFAULT.accelSensitivityLsbPerG,
+            boardProfiles = BoardProfile.decodeList(prefs[KEY_PROFILES]),
+            activeProfile = prefs[KEY_ACTIVE_PROFILE],
         )
     }
 
@@ -66,6 +68,29 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setAccelSensitivity(value: Float) =
         context.settingsDataStore.edit { it[KEY_ACCEL_SENS] = value }
+
+    /** Сохраняет/перезаписывает профиль по имени и делает его активным. */
+    suspend fun saveProfile(p: BoardProfile) = context.settingsDataStore.edit { prefs ->
+        val next = BoardProfile.decodeList(prefs[KEY_PROFILES]).filter { it.name != p.name } + p
+        prefs[KEY_PROFILES] = BoardProfile.encodeList(next)
+        prefs[KEY_ACTIVE_PROFILE] = p.name
+    }
+
+    /** Удаляет профиль по имени; снимает активность, если удаляли активный. */
+    suspend fun deleteProfile(name: String) = context.settingsDataStore.edit { prefs ->
+        val next = BoardProfile.decodeList(prefs[KEY_PROFILES]).filter { it.name != name }
+        prefs[KEY_PROFILES] = BoardProfile.encodeList(next)
+        if (prefs[KEY_ACTIVE_PROFILE] == name) prefs.remove(KEY_ACTIVE_PROFILE)
+    }
+
+    /** Применяет профиль: записывает его параметры в активные настройки. */
+    suspend fun applyProfile(p: BoardProfile) = context.settingsDataStore.edit { prefs ->
+        prefs[KEY_LINE_ENDING] = p.lineEnding.name
+        prefs[KEY_SAMPLE_RATE_HZ] = p.sampleRateHz
+        prefs[KEY_ACCEL_SENS] = p.accelSensitivityLsbPerG
+        prefs[KEY_QUICK_CMDS] = QuickCommand.encodeList(p.quickCommands)
+        prefs[KEY_ACTIVE_PROFILE] = p.name
+    }
 
     suspend fun setAutoReconnect(value: Boolean) =
         context.settingsDataStore.edit { it[KEY_AUTO_RECONNECT] = value }
@@ -182,6 +207,8 @@ class SettingsRepository(private val context: Context) {
         private val KEY_QUICK_CMDS: Preferences.Key<String> = stringPreferencesKey("quick_commands")
         private val KEY_SAMPLE_RATE_HZ: Preferences.Key<Float> = floatPreferencesKey("sample_rate_hz")
         private val KEY_ACCEL_SENS: Preferences.Key<Float> = floatPreferencesKey("accel_sens_lsb_per_g")
+        private val KEY_PROFILES: Preferences.Key<String> = stringPreferencesKey("board_profiles")
+        private val KEY_ACTIVE_PROFILE: Preferences.Key<String> = stringPreferencesKey("active_profile")
 
         // MQTT — отдельный неймспейс ключей (префикс mqtt_).
         // Пароль хранится plain в DataStore: для лабораторного использования
