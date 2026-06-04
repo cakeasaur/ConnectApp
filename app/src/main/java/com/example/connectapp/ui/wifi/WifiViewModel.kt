@@ -118,6 +118,12 @@ class WifiViewModel(
         }
     }
 
+    /** Повторить подключение к последнему host:port (кнопка «Повторить»). */
+    fun retry() {
+        val p = port.toIntOrNull() ?: return
+        connect(host, p)
+    }
+
     fun disconnect() {
         viewModelScope.launch { repo.disconnect() }
     }

@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -141,7 +143,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            StatusBadge(state = state)
+            StatusBadge(state = state, onRetry = { viewModel.retry() })
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -267,7 +269,7 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-internal fun StatusBadge(state: ConnectionState) {
+internal fun StatusBadge(state: ConnectionState, onRetry: (() -> Unit)? = null) {
     // Crossfade сглаживает скачки цвета при переходах Idle→Connecting→Connected.
     Crossfade(targetState = state, label = "conn-status") { s ->
         val (label, color) = when (s) {
@@ -275,28 +277,46 @@ internal fun StatusBadge(state: ConnectionState) {
             is ConnectionState.Connecting -> stringResource(R.string.status_connecting) to WarningAmber
             is ConnectionState.Connected -> stringResource(R.string.status_connected) to SuccessGreen
             is ConnectionState.Disconnected -> stringResource(R.string.status_disconnected) to ErrorRed
-            is ConnectionState.Reconnecting -> stringResource(R.string.status_reconnecting, s.attempt) to WarningAmber
+            is ConnectionState.Reconnecting -> stringResource(
+                R.string.status_reconnecting, s.attempt, com.example.connectapp.utils.Constants.MAX_RECONNECT_ATTEMPTS
+            ) to WarningAmber
             is ConnectionState.Error -> stringResource(R.string.status_error, s.message) to ErrorRed
         }
+        val busy = s is ConnectionState.Connecting || s is ConnectionState.Reconnecting
+        val canRetry = onRetry != null && (s is ConnectionState.Error || s is ConnectionState.Disconnected)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .background(color = color.copy(alpha = 0.12f), shape = RoundedCornerShape(12.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .padding(start = 14.dp, end = if (canRetry) 6.dp else 14.dp, top = 10.dp, bottom = 10.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .background(color = color, shape = CircleShape)
-            )
+            if (busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = color
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(color = color, shape = CircleShape)
+                )
+            }
             Spacer(Modifier.width(10.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,
                 color = color,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
             )
+            if (canRetry) {
+                TextButton(onClick = { onRetry?.invoke() }) {
+                    Text(stringResource(R.string.status_retry), color = color, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
     }
 }

@@ -37,8 +37,9 @@
     <string name="status_connecting">Подключение…</string>
     <string name="status_connected">Подключено</string>
     <string name="status_disconnected">Соединение потеряно</string>
-    <string name="status_reconnecting">Переподключение (попытка %1$d)</string>
+    <string name="status_reconnecting">Переподключение %1$d/%2$d…</string>
     <string name="status_error">Ошибка: %1$s</string>
+    <string name="status_retry">Повторить</string>
 
     <!-- Toasts / errors -->
     <string name="toast_invalid_address">Введите валидный IP и порт (1..65535)</string>
