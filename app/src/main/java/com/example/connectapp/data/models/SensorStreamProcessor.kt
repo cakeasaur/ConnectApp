@@ -37,7 +37,13 @@ class SensorStreamProcessor {
 
         for (raw in normalised.split('\n')) {
             val t = raw.trim()
-            if (t.isNotEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
+            if (t.isEmpty()) continue
+            // Произвольные именованные каналы (voltage=.., rpm=..) — для плат с
+            // нестандартным набором сенсоров. Публикуем в динамическую шину.
+            val dyn = DataParser.parseDynamicChannels(t)
+            for ((id, v) in dyn) SensorDataBus.addDynamic(id, v)
+            // Текст (не телеметрия и не именованный канал) → в консоль.
+            if (dyn.isEmpty() && DataParser.parse(t) == null) CommandLog.appendIfText(t)
         }
 
         val records = synchronized(lineBuffer) {

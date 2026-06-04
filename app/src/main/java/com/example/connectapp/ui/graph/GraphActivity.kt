@@ -316,6 +316,7 @@ private fun GraphScreen(
     val a2xLive by SensorDataBus.accel2X.collectAsStateWithLifecycle()
     val a2yLive by SensorDataBus.accel2Y.collectAsStateWithLifecycle()
     val a2zLive by SensorDataBus.accel2Z.collectAsStateWithLifecycle()
+    val dynIds by SensorDataBus.dynamicIds.collectAsStateWithLifecycle()
 
     // «Идёт ли поток» определяем по факту прихода данных, а не локальным флагом:
     // если последний отсчёт свежее 3 с — стрим активен. Кнопка честно отражает
@@ -847,6 +848,30 @@ private fun GraphScreen(
                 )
             }
 
+            // Динамические каналы — авто-детект произвольных меток с платы
+            // (voltage, rpm, pressure…). Появляются сами, по одному графику на канал.
+            if (dynIds.isNotEmpty()) {
+                Text("Дополнительные каналы", style = MaterialTheme.typography.titleLarge)
+                dynIds.forEach { id ->
+                    val live by (SensorDataBus.dynamicFlow(id) ?: emptyFlow).collectAsStateWithLifecycle()
+                    val pts = remember(live, windowMs) { applyWindow(live, windowMs) }
+                    Text(id, style = MaterialTheme.typography.titleMedium)
+                    if (pts.isNotEmpty()) StatsRow(id, pts, "")
+                    ChartCard(height = 180) {
+                        NeonChart(
+                            seriesList = listOf(NeonSeries(pts, dynColor(id), id)),
+                            config = NeonChartConfig(
+                                absoluteTime = absoluteTime,
+                                showPeaks = showPeaks,
+                            ),
+                            zoom = zoom,
+                            crosshair = crosshair,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
+
             Text("3D облако акселерометров", style = MaterialTheme.typography.titleLarge)
             Text(
                 "A1 красным, A2 синим. Перетаскивай — вращай, pinch — зум.",
@@ -1035,6 +1060,17 @@ private fun HealthBanner(
 /** LSB→g для отображения: делит value на чувствительность. on=false → как есть. */
 private fun convAccel(points: List<TimedPoint>, on: Boolean, sens: Float): List<TimedPoint> =
     if (on && sens > 0f) points.map { it.copy(value = it.value / sens) } else points
+
+/** Пустой поток-заглушка для динамического канала, который ещё не успел появиться. */
+private val emptyFlow = kotlinx.coroutines.flow.MutableStateFlow<List<TimedPoint>>(emptyList())
+
+private val dynPalette = listOf(
+    Color(0xFFFFD54F), Color(0xFF4DD0E1), Color(0xFFBA68C8),
+    Color(0xFF81C784), Color(0xFFFF8A65), Color(0xFF7986CB),
+)
+
+/** Стабильный цвет динамического канала по его id. */
+private fun dynColor(id: String) = dynPalette[(id.hashCode() and 0x7fffffff) % dynPalette.size]
 
 @Composable
 private fun StatsRow(label: String, points: List<TimedPoint>, unit: String) {

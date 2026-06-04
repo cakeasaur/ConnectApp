@@ -258,4 +258,26 @@ class DataParserTest {
         assertEquals(28.5f, DataParser.parse(recs[0])?.temperature1)
         assertEquals(25.0f, DataParser.parse(recs[1])?.temperature1)
     }
+
+    @Test
+    fun `parseDynamicChannels extracts named channels`() {
+        val m = DataParser.parseDynamicChannels("vbat=3.70 rpm=1200 pressure=101.3")
+        assertEquals(3, m.size)
+        assertEquals(3.70f, m["vbat"])
+        assertEquals(1200f, m["rpm"])
+        assertEquals(101.3f, m["pressure"])
+    }
+
+    @Test
+    fun `parseDynamicChannels skips temp and accel labels`() {
+        // T/X/Y/Z идут в свои каналы, не в динамику.
+        val m = DataParser.parseDynamicChannels("T:25.0 X:1 Y:2 Z:3 rssi=-70")
+        assertEquals(1, m.size)
+        assertEquals(-70f, m["rssi"])
+    }
+
+    @Test
+    fun `parseDynamicChannels ignores positional CSV telemetry`() {
+        assertEquals(0, DataParser.parseDynamicChannels("11329;22.0;22.0;0,0,0;0,0,0;").size)
+    }
 }
