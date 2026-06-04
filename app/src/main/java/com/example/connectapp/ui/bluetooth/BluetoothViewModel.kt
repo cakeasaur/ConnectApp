@@ -206,6 +206,12 @@ class BluetoothViewModel(
         viewModelScope.launch { repo.disconnect() }
     }
 
+    /** Повторить подключение к последнему адресу (кнопка «Повторить» в статусе). */
+    fun retry() {
+        val addr = lastAddress ?: return
+        connect(addr)
+    }
+
     /**
      * Send a message from the free-text input.
      * Если в настройках включён HEX-режим — payload интерпретируется как HEX-байты

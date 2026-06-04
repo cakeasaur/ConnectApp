@@ -374,7 +374,7 @@ private fun BluetoothScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            StatusBadge(state = state)
+            StatusBadge(state = state, onRetry = { viewModel.retry() })
             HeartbeatRow(state = state, lastPacketAt = lastPacketAt)
 
             SensorPanel(data = sensor)
