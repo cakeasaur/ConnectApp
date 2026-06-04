@@ -167,6 +167,7 @@ private fun BluetoothScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var quickCmdsOpen by remember { mutableStateOf(false) }
+    var profilesOpen by remember { mutableStateOf(false) }
     var calibOpen by remember { mutableStateOf(false) }
 
     val enableBtLauncher = rememberLauncherForActivityResult(
@@ -244,7 +245,8 @@ private fun BluetoothScreen(
             onHexSend = viewModel::setHexSendMode,
             onSampleRate = viewModel::setSampleRateHz,
             onAccelSensitivity = viewModel::setAccelSensitivity,
-            onEditQuickCommands = { quickCmdsOpen = true }
+            onEditQuickCommands = { quickCmdsOpen = true },
+            onOpenProfiles = { profilesOpen = true },
         )
     }
 
@@ -253,6 +255,17 @@ private fun BluetoothScreen(
             initial = settings.quickCommands,
             onSave = { viewModel.setQuickCommands(it) },
             onDismiss = { quickCmdsOpen = false }
+        )
+    }
+
+    if (profilesOpen) {
+        ProfilesDialog(
+            profiles = settings.boardProfiles,
+            activeProfile = settings.activeProfile,
+            onSaveCurrent = { viewModel.saveCurrentAsProfile(it) },
+            onApply = { viewModel.applyProfile(it) },
+            onDelete = { viewModel.deleteProfile(it) },
+            onDismiss = { profilesOpen = false },
         )
     }
 
@@ -624,7 +637,8 @@ private fun SettingsDialog(
     onHexSend: (Boolean) -> Unit,
     onSampleRate: (Float) -> Unit,
     onAccelSensitivity: (Float) -> Unit,
-    onEditQuickCommands: () -> Unit
+    onEditQuickCommands: () -> Unit,
+    onOpenProfiles: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -672,6 +686,23 @@ private fun SettingsDialog(
                     current = settings.accelSensitivityLsbPerG,
                     onChange = onAccelSensitivity
                 )
+                // Профили плат — отдельный диалог. Здесь summary активного + кнопка.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Профили плат", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            settings.activeProfile?.let { "активен: $it" }
+                                ?: "не выбран (${settings.boardProfiles.size} сохранено)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = onOpenProfiles) { Text("Профили") }
+                }
                 // Кастомные команды — отдельный диалог-редактор, открываемый
                 // отсюда. Здесь только summary + кнопка.
                 Row(
@@ -772,6 +803,96 @@ private fun QuickCommandsDialog(
                     Icon(Icons.Filled.Add, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.quick_cmd_add))
+                }
+            }
+        }
+    )
+}
+
+/**
+ * Профили плат: сохранить текущие настройки под именем, применить сохранённый
+ * профиль (записывает его параметры в активные настройки), удалить.
+ */
+@Composable
+private fun ProfilesDialog(
+    profiles: List<com.example.connectapp.data.settings.BoardProfile>,
+    activeProfile: String?,
+    onSaveCurrent: (String) -> Unit,
+    onApply: (com.example.connectapp.data.settings.BoardProfile) -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var newName by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
+        title = { Text("Профили плат") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Профиль хранит терминатор, частоту опроса, чувствительность и " +
+                        "быстрые команды. Сохраните текущие настройки под именем и " +
+                        "переключайтесь между платами одним тапом.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        singleLine = true,
+                        label = { Text("имя профиля") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilledTonalButton(
+                        onClick = { if (newName.isNotBlank()) { onSaveCurrent(newName); newName = "" } },
+                        enabled = newName.isNotBlank()
+                    ) { Text("Сохранить") }
+                }
+                if (profiles.isEmpty()) {
+                    Text(
+                        "Профилей пока нет — сохраните текущие настройки выше.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    profiles.forEach { p ->
+                        val active = p.name == activeProfile
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (active) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                                Text(
+                                    if (active) "${p.name}  ✓ активен" else p.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    "${p.lineEnding.name} · ${p.sampleRateHz.toInt()} Гц · " +
+                                        "${p.accelSensitivityLsbPerG.toInt()} LSB/g · " +
+                                        "команд: ${p.quickCommands.size}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TextButton(onClick = { onApply(p) }) { Text("Применить") }
+                                    TextButton(onClick = { onDelete(p.name) }) { Text("Удалить") }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

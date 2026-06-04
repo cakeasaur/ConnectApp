@@ -306,6 +306,26 @@ class BluetoothViewModel(
     fun setQuickCommands(list: List<QuickCommand>) =
         viewModelScope.launch { settingsRepo.setQuickCommands(list) }
 
+    /** Сохранить текущие настройки как профиль платы под именем [name]. */
+    fun saveCurrentAsProfile(name: String) = viewModelScope.launch {
+        val s = _settings.value
+        settingsRepo.saveProfile(
+            com.example.connectapp.data.settings.BoardProfile(
+                name = name.trim(),
+                lineEnding = s.lineEnding,
+                sampleRateHz = s.sampleRateHz,
+                accelSensitivityLsbPerG = s.accelSensitivityLsbPerG,
+                quickCommands = s.quickCommands,
+            )
+        )
+    }
+
+    fun applyProfile(p: com.example.connectapp.data.settings.BoardProfile) =
+        viewModelScope.launch { settingsRepo.applyProfile(p) }
+
+    fun deleteProfile(name: String) =
+        viewModelScope.launch { settingsRepo.deleteProfile(name) }
+
     /**
      * Отправить кастомную quick-команду. В отличие от [send], решение
      * "HEX или text" берётся ИЗ САМОЙ команды (cmd.hex), а не из глобальной
