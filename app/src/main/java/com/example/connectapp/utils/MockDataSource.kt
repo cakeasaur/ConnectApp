@@ -64,6 +64,13 @@ object MockDataSource {
                     counter, temp1, temp2, ax1, ay1, az1, ax2, ay2, az2
                 )
                 trySend(line)
+                // Демо динамических каналов: раз в 10 отсчётов плата шлёт ещё и
+                // именованные метки (напряжение, обороты) — авто-детект каналов.
+                if (counter % 10 == 0) {
+                    val vbat = 3.7 + 0.1 * sin(ts * 0.5)
+                    val rpm = (1200 + 300 * sin(ts * 0.8)).toInt()
+                    trySend("vbat=%.2f rpm=%d\n".format(java.util.Locale.ROOT, vbat, rpm))
+                }
                 counter++
                 delay(periodMs)
             }

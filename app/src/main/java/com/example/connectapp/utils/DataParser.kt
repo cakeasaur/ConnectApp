@@ -101,6 +101,32 @@ object DataParser {
         return out
     }
 
+    // Произвольный канал вида "имя: значение" / "имя=значение" — для плат с
+    // нестандартным набором сенсоров (voltage, rpm, pressure, rssi…).
+    private val labeledChannelRegex =
+        Regex("""(?:^|[\s,;>|])([A-Za-z][A-Za-z0-9_]{0,15})\s*[:=]\s*(-?\d+(?:\.\d+)?)""")
+    // Метки, уже обрабатываемые как температура/акселерометр — их в динамику не берём.
+    private val reservedChannelKeys = setOf(
+        "t", "t1", "t2", "temp", "temp1", "temp2", "temperature",
+        "x", "y", "z", "ax", "ay", "az", "ax1", "ay1", "az1", "ax2", "ay2", "az2"
+    )
+
+    /**
+     * Извлекает произвольные именованные каналы из строки (метки `имя:значение`).
+     * Температурные/акселерометрные метки исключаются — они идут в свои каналы.
+     * Чисто-позиционная телеметрия (CSV без меток) сюда не попадает. Пустая
+     * map — значит динамических каналов в строке нет.
+     */
+    fun parseDynamicChannels(line: String): Map<String, Float> {
+        val out = LinkedHashMap<String, Float>()
+        for (m in labeledChannelRegex.findAll(line)) {
+            val key = m.groupValues[1]
+            if (key.lowercase() in reservedChannelKeys) continue
+            m.groupValues[2].toFloatOrNull()?.let { out[key] = it }
+        }
+        return out
+    }
+
     fun parse(line: String): SensorData? {
         val raw = line.trim()
         if (raw.isEmpty()) return null

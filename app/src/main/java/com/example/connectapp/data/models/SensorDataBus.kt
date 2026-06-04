@@ -45,6 +45,23 @@ object SensorDataBus {
     val accel2Y: StateFlow<List<TimedPoint>> = a2yCh.flow.asStateFlow()
     val accel2Z: StateFlow<List<TimedPoint>> = a2zCh.flow.asStateFlow()
 
+    // Динамические каналы — авто-детект произвольных меток `имя:значение`
+    // с разных плат (voltage, rpm, pressure…). Создаются на лету при первом
+    // появлении метки. [dynamicIds] — список id в порядке появления (для UI),
+    // [dynamicFlow] — данные конкретного канала.
+    private val dynChannels = java.util.concurrent.ConcurrentHashMap<String, Channel>()
+    private val _dynamicIds = MutableStateFlow<List<String>>(emptyList())
+    val dynamicIds: StateFlow<List<String>> = _dynamicIds.asStateFlow()
+
+    fun addDynamic(id: String, value: Float, ts: Long = System.currentTimeMillis()) {
+        var created = false
+        val ch = dynChannels.computeIfAbsent(id) { created = true; Channel() }
+        if (created) synchronized(dynChannels) { _dynamicIds.value = _dynamicIds.value + id }
+        push(ch, TimedPoint(ts, value))
+    }
+
+    fun dynamicFlow(id: String): StateFlow<List<TimedPoint>>? = dynChannels[id]?.flow
+
     fun addTemperature(slot: Int, value: Float, ts: Long = System.currentTimeMillis()) {
         push(if (slot == 2) temp2Ch else temp1Ch, TimedPoint(ts, value))
     }
@@ -105,6 +122,10 @@ object SensorDataBus {
             synchronized(ch.deque) { ch.deque.clear() }
             ch.flow.value = emptyList()
         }
+        // Новая сессия может быть другой платой — сбрасываем динамические каналы
+        // целиком, иначе от прошлой платы останутся чужие пустые карточки.
+        dynChannels.clear()
+        _dynamicIds.value = emptyList()
         _generation.value += 1
     }
 }
