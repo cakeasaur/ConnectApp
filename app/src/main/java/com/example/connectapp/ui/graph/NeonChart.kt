@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
@@ -213,6 +214,7 @@ fun NeonChart(
     // Раньше Path() new каждый draw × 3 series × 30 fps = 90 native-alloc/сек.
     val linePath = remember { Path() }
     val bandPath = remember { Path() }
+    val fillPath = remember { Path() }
 
     Box(
         modifier = modifier
@@ -244,7 +246,7 @@ fun NeonChart(
     ) {
         Canvas(Modifier.fillMaxSize()) {
             PerfTrace.measure("chart.draw") {
-                drawNeonChart(nonEmpty, bounds, config, firstT, lastT, linePath, bandPath)
+                drawNeonChart(nonEmpty, bounds, config, firstT, lastT, linePath, bandPath, fillPath)
             }
         }
         // Легенда сверху-слева: цвет, метка, текущее значение и пометка оси.
@@ -423,6 +425,7 @@ private fun DrawScope.drawNeonChart(
     lastT: Long,
     linePath: Path,
     bandPath: Path,
+    fillPath: Path,
 ) {
     // Density-aware: 10sp × 5.5 chars × ~0.58 char-width ≈ density*32f.
     // Бюджет 5.5 символов — под отрицательную метку со знаком ("-0.50"),
@@ -499,6 +502,18 @@ private fun DrawScope.drawNeonChart(
         }
         val thr = config.thresholds.firstOrNull { it.axis == s.axis }
         val alertY = thr?.let { yPx(it.value, ab) }
+        // Лёгкая градиентная заливка под линией — рисуем ПЕРВОЙ (фоном), чтобы
+        // линия/glow и точки легли поверх. Даёт «глубину» без новой логики.
+        if (s.data.size >= 2) {
+            buildSmoothPath(fillPath, s.data, firstT, lastT, ::xPx, ::yPx, ab, closeBottomY = plotB)
+            drawPath(
+                fillPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(s.color.copy(alpha = 0.18f), Color.Transparent),
+                    startY = plotT, endY = plotB,
+                ),
+            )
+        }
         if (config.showEnvelope) drawEnvelope(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints, bandPath)
         if (config.showSigma) drawSigma(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
         drawSeriesLine(s, ab, firstT, lastT, ::xPx, ::yPx, alertY, linePath)
@@ -686,6 +701,7 @@ private fun buildSmoothPath(
     xPx: (Long) -> Float,
     yPx: (Float, AxisBounds) -> Float,
     ab: AxisBounds,
+    closeBottomY: Float? = null,   // если задано — замыкаем контур вниз для заливки
 ) {
     // Path передан извне (remember в @Composable) и переиспользуется между
     // кадрами/сериями. reset() очищает внутренние буферы без realloc.
@@ -702,7 +718,8 @@ private fun buildSmoothPath(
     if (startIdx >= endIdx) return
 
     val first = data[startIdx]
-    path.moveTo(xPx(first.t), yPx(first.value, ab))
+    val firstX = xPx(first.t)
+    path.moveTo(firstX, yPx(first.value, ab))
     // Quadratic через середины: control=точка i, end=midpoint(i, i+1).
     // Это даёт плавную кривую через все точки данных (Catmull-Rom-like).
     for (i in startIdx + 1 until endIdx) {
@@ -714,7 +731,14 @@ private fun buildSmoothPath(
     }
     // Финальный сегмент — прямая к последней точке.
     val last = data[endIdx]
-    path.lineTo(xPx(last.t), yPx(last.value, ab))
+    val lastX = xPx(last.t)
+    path.lineTo(lastX, yPx(last.value, ab))
+    // Для заливки замыкаем контур вниз: линия → правый низ → левый низ → старт.
+    if (closeBottomY != null) {
+        path.lineTo(lastX, closeBottomY)
+        path.lineTo(firstX, closeBottomY)
+        path.close()
+    }
 }
 
 private fun DrawScope.drawCurrentPoint(
