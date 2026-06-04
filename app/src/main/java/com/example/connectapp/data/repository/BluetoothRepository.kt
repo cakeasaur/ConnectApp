@@ -182,15 +182,19 @@ class BluetoothRepository(
                     }
                     if (!isActive || intent.requested) break
 
+                    var gotData = false
                     try {
                         client.connect(a, address)
                         AlertEngine.clearEvents()
                         _state.value = ConnectionState.Connected
                         wasConnected = true
-                        attempt = 0 // reset counter on successful connect
 
                         // Blocks until the remote closes or an I/O error occurs.
                         client.incoming().collect {
+                            // Счётчик попыток сбрасываем только когда РЕАЛЬНО пришли
+                            // данные — иначе «принял и сразу закрыл» сбрасывал бы его
+                            // на каждом цикле, и реконнект крутился бы вечно.
+                            if (!gotData) { gotData = true; attempt = 0 }
                             _lastPacketAt.value = System.currentTimeMillis()
                             _incoming.emit(it)
                         }
@@ -213,6 +217,17 @@ class BluetoothRepository(
                     }
 
                     if (!intent.requested) attempt++
+                    // Соединение установилось, но данных не было и оно оборвалось —
+                    // это не «связь моргнула», а устройство, которое принимает RFCOMM
+                    // и тут же закрывает (подключились к гарнитуре вместо платы, или
+                    // модуль занят). Не крутим вечно: после N подряд таких обрывов
+                    // останавливаемся с понятной ошибкой.
+                    if (!intent.requested && !gotData && attempt >= Constants.MAX_RECONNECT_ATTEMPTS) {
+                        _state.value = ConnectionState.Error(
+                            "Связь постоянно обрывается — проверьте, что подключаетесь к плате (не к гарнитуре) и что она свободна"
+                        )
+                        return@launch
+                    }
                 }
             } catch (e: CancellationException) {
                 // External cancellation (manual disconnect or viewModelScope cleared).
