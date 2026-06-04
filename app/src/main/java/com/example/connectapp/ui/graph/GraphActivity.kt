@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Surface
@@ -365,6 +366,7 @@ private fun GraphScreen(
     // Advanced — скрывает FFT/STFT/Lissajous/Phosphor/Kalman/Velocity до галочки.
     // Базовый набор (RMS/Tilt/HeatFlux) остаётся всегда.
     var advancedMath by rememberSaveable { mutableStateOf(false) }
+    var displayPanelExpanded by rememberSaveable { mutableStateOf(false) }
     var showAx1 by rememberSaveable { mutableStateOf(true) }
     var showAy1 by rememberSaveable { mutableStateOf(true) }
     var showAz1 by rememberSaveable { mutableStateOf(true) }
@@ -672,22 +674,50 @@ private fun GraphScreen(
                 }
             }
 
-            // Overlays-row: envelope / ±1σ / threshold-alert / phase-lock / advanced.
-            // Применяются ко ВСЕМ NeonChart'ам единообразно — научный режим.
-            // FlowRow вместо обычного Row: 5 чипов на узком экране не помещаются
-            // в одну строку и последний (advanced) уезжал за правый край —
-            // пользователь его просто не видел. FlowRow переносит на новую.
-            androidx.compose.foundation.layout.FlowRow(
+            // Панель «Отображение»: оверлеи (envelope / ±1σ / alert / пики /
+            // phase-lock / advanced) + режимы (время, единицы). Свёрнута по
+            // умолчанию — 8 чипов в раскрытом виде занимали пол-экрана над графиком.
+            val displayActiveCount = listOf(
+                showEnvelope, showSigma, showThreshold, showPeaks, phaseLock, advancedMath
+            ).count { it }
+            val displayRotation by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (displayPanelExpanded) 180f else 0f,
+                label = "displayChevron"
+            )
+            Surface(
+                onClick = { displayPanelExpanded = !displayPanelExpanded },
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        if (displayActiveCount > 0) "Отображение · $displayActiveCount" else "Отображение",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = if (displayPanelExpanded) "Свернуть" else "Развернуть",
+                        modifier = Modifier.rotate(displayRotation)
+                    )
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = displayPanelExpanded,
+                enter = androidx.compose.animation.expandVertically() +
+                    androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.shrinkVertically() +
+                    androidx.compose.animation.fadeOut(),
+            ) {
+              androidx.compose.foundation.layout.FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    "overlays:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
                 val chipColors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary,
                     selectedLabelColor = MaterialTheme.colorScheme.onPrimary
@@ -740,6 +770,7 @@ private fun GraphScreen(
                     label = { Text("advanced") },
                     colors = chipColors
                 )
+              }
             }
 
             // Neon-палитра — насыщенные неоновые цвета поверх тёмного фона
@@ -928,6 +959,12 @@ private fun GraphScreen(
                     sampleRateHz = sampleRateHz,
                 )
             }
+
+            // Пока ни один канал не дал данных — графики/математика скрыты, и без
+            // подсказки экран выглядит пустым («сломанным»). Показываем placeholder.
+            if (!hasTemp && !hasA1 && !hasA2) {
+                GraphsEmptyState(monitoring = monitoring)
+            }
         }
             // Встроенная консоль внизу: лог текстовых ответов платы + ввод команд.
             CommandConsole(transport = transport)
@@ -944,6 +981,43 @@ private fun GraphScreen(
  * ([CommandLog]) + поле ввода команды. Отправка идёт через [CommandBus] на
  * активный транспорт; отправленная команда эхо-логируется как "→ cmd".
  */
+/**
+ * Заглушка для экрана графиков, когда ни один канал ещё не прислал данные.
+ * Без неё скрытие пустых секций оставляет голый экран. Текст зависит от того,
+ * идёт ли уже поток (ждём первые отсчёты) или мониторинг остановлен.
+ */
+@Composable
+private fun GraphsEmptyState(monitoring: Boolean) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 48.dp, horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(
+            Icons.Filled.ShowChart,
+            contentDescription = null,
+            modifier = Modifier.size(56.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+        )
+        Text(
+            if (monitoring) "Ждём данные с платы…" else "Графиков пока нет",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            if (monitoring)
+                "Поток запущен, ждём первые отсчёты температуры/акселерометра."
+            else
+                "Нажми ▶ Мониторинг вверху, чтобы пошёл поток данных. Графики и анализ появятся автоматически.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CommandConsole(transport: String) {
