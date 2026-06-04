@@ -57,6 +57,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -853,21 +854,23 @@ private fun GraphScreen(
             if (dynIds.isNotEmpty()) {
                 Text("Дополнительные каналы", style = MaterialTheme.typography.titleLarge)
                 dynIds.forEach { id ->
-                    val live by (SensorDataBus.dynamicFlow(id) ?: emptyFlow).collectAsStateWithLifecycle()
-                    val pts = remember(live, windowMs) { applyWindow(live, windowMs) }
-                    Text(id, style = MaterialTheme.typography.titleMedium)
-                    if (pts.isNotEmpty()) StatsRow(id, pts, "")
-                    ChartCard(height = 180) {
-                        NeonChart(
-                            seriesList = listOf(NeonSeries(pts, dynColor(id), id)),
-                            config = NeonChartConfig(
-                                absoluteTime = absoluteTime,
-                                showPeaks = showPeaks,
-                            ),
-                            zoom = zoom,
-                            crosshair = crosshair,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                    key(id) {
+                        val live by (SensorDataBus.dynamicFlow(id) ?: emptyFlow).collectAsStateWithLifecycle()
+                        val pts = remember(live, windowMs) { applyWindow(live, windowMs) }
+                        Text(id, style = MaterialTheme.typography.titleMedium)
+                        if (pts.isNotEmpty()) StatsRow(id, pts, "")
+                        ChartCard(height = 180) {
+                            NeonChart(
+                                seriesList = listOf(NeonSeries(pts, dynColor(id), id)),
+                                config = NeonChartConfig(
+                                    absoluteTime = absoluteTime,
+                                    showPeaks = showPeaks,
+                                ),
+                                zoom = zoom,
+                                crosshair = crosshair,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
                 }
             }
