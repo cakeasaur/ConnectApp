@@ -1,7 +1,10 @@
 package com.example.connectapp.utils
 
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
@@ -191,6 +194,15 @@ object RrdLog {
     val dump: StateFlow<RrdDump?> = _dump.asStateFlow()
 
     /**
+     * Итог последнего ответа платы на `log dump` — человекочитаемая фраза для
+     * экранного фидбэка (Snackbar/Toast). Эмитим при пустом журнале и при
+     * успешном парсинге таблицы; экран сам решает, как показать.
+     */
+    data class Result(val message: String, val count: Int)
+    private val _results = MutableSharedFlow<Result>(extraBufferCapacity = 4)
+    val results: SharedFlow<Result> = _results.asSharedFlow()
+
+    /**
      * Привязывает файл персиста и восстанавливает последний дамп с диска, чтобы
      * журнал пережил перезапуск процесса. Вызывать один раз из Application.
      */
@@ -209,6 +221,16 @@ object RrdLog {
         synchronized(lock) {
             val clean = stripAnsi(line)
             val t = clean.trim()
+            // Пустой журнал: плата (напр. BOLUTEK/PIC) на `log dump` отвечает
+            // одной строкой «No events in log.» — таблицы и «Total entries» нет,
+            // поэтому обычный захват не срабатывает. Ловим явно.
+            if (t.contains("No events in log", ignoreCase = true)) {
+                _dump.value = RrdDump(emptyList(), 0, capturedAt = System.currentTimeMillis(), rawText = t)
+                _results.tryEmit(Result("Журнал платы пуст — событий нет", 0))
+                capturing = false
+                buf.setLength(0)
+                return
+            }
             if (t.contains("RRD Event Log", ignoreCase = true)) {
                 capturing = true
                 buf.setLength(0)
@@ -223,6 +245,7 @@ object RrdLog {
                         val d = it.copy(capturedAt = System.currentTimeMillis(), rawText = raw)
                         _dump.value = d
                         saveToDisk(d)
+                        _results.tryEmit(Result("Журнал получен: ${d.events.size} записей", d.events.size))
                     }
                     buf.setLength(0)
                 }
