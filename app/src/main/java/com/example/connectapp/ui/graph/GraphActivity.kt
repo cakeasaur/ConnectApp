@@ -312,6 +312,16 @@ private fun GraphScreen(
     )
     val sampleRateHz = appSettings.sampleRateHz
 
+    // Явный отклик на `dump`: плата может ответить «журнал пуст» или прислать
+    // таблицу — в обоих случаях показываем Toast, иначе featured-кнопка кажется
+    // «мёртвой» (результат тонул в маленьком логе внизу).
+    LaunchedEffect(Unit) {
+        com.example.connectapp.utils.RrdLog.results.collect { r ->
+            val msg = if (r.count > 0) "${r.message}. Открыть: ⋮ → Журнал RRD" else r.message
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
     // Live-данные с шины. Дальше прогоняем через snapshotWhen(paused) и
     // applyWindow(window) — фильтры применяются и к графикам, и к MathSection.
     val temp1Live by SensorDataBus.temp1.collectAsStateWithLifecycle()
