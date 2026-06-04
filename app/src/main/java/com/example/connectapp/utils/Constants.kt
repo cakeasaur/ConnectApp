@@ -44,6 +44,14 @@ object Constants {
     /** Delay before auto-reconnect attempt, milliseconds. */
     const val RECONNECT_DELAY_MS = 3_000L
 
+    /**
+     * Сколько подряд-идущих обрывов БЕЗ полученных данных терпим, прежде чем
+     * прекратить авто-реконнект с ошибкой. Защита от вечного цикла, когда
+     * устройство принимает RFCOMM-соединение и тут же его закрывает (например,
+     * подключились к аудио-гарнитуре вместо платы, или модуль занят/без данных).
+     */
+    const val MAX_RECONNECT_ATTEMPTS = 4
+
     /** Maximum characters kept in the log. Oldest lines are dropped beyond this. */
     const val MAX_LOG_CHARS = 30_000
 
