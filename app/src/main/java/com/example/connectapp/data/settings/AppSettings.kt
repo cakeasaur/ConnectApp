@@ -41,6 +41,8 @@ data class AppSettings(
     val boardProfiles: List<BoardProfile> = emptyList(),
     /** Имя активного профиля, либо null если ни один не выбран. */
     val activeProfile: String? = null,
+    /** Пройден ли стартовый онбординг-визард. Пока false — показываем его. */
+    val onboardingDone: Boolean = false,
 ) {
     companion object {
         val DEFAULT = AppSettings()

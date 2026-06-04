@@ -60,8 +60,12 @@ class SettingsRepository(private val context: Context) {
             accelSensitivityLsbPerG = prefs[KEY_ACCEL_SENS] ?: AppSettings.DEFAULT.accelSensitivityLsbPerG,
             boardProfiles = BoardProfile.decodeList(prefs[KEY_PROFILES]),
             activeProfile = prefs[KEY_ACTIVE_PROFILE],
+            onboardingDone = prefs[KEY_ONBOARDING_DONE] ?: AppSettings.DEFAULT.onboardingDone,
         )
     }
+
+    suspend fun setOnboardingDone(value: Boolean) =
+        context.settingsDataStore.edit { it[KEY_ONBOARDING_DONE] = value }
 
     suspend fun setSampleRateHz(value: Float) =
         context.settingsDataStore.edit { it[KEY_SAMPLE_RATE_HZ] = value }
@@ -209,6 +213,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_ACCEL_SENS: Preferences.Key<Float> = floatPreferencesKey("accel_sens_lsb_per_g")
         private val KEY_PROFILES: Preferences.Key<String> = stringPreferencesKey("board_profiles")
         private val KEY_ACTIVE_PROFILE: Preferences.Key<String> = stringPreferencesKey("active_profile")
+        private val KEY_ONBOARDING_DONE: Preferences.Key<Boolean> = booleanPreferencesKey("onboarding_done")
 
         // MQTT — отдельный неймспейс ключей (префикс mqtt_).
         // Пароль хранится plain в DataStore: для лабораторного использования

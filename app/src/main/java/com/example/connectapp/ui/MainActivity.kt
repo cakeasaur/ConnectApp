@@ -48,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +72,7 @@ import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.GlobalConnectionStatus
 import com.example.connectapp.data.settings.SettingsRepository
 import com.example.connectapp.ui.bluetooth.BluetoothActivity
+import com.example.connectapp.ui.onboarding.OnboardingActivity
 import com.example.connectapp.ui.history.HistoryActivity
 import com.example.connectapp.ui.mqtt.MqttSettingsActivity
 import com.example.connectapp.ui.test.TestActivity
@@ -111,6 +113,18 @@ private fun MainScreen() {
     // новую корутину сбора. Leak.
     val lastBtFlow = remember(repo) { repo.connectionHistory.map { it.firstOrNull() } }
     val lastBt by lastBtFlow.collectAsStateWithLifecycle(initialValue = null)
+
+    // Онбординг первого запуска. null = ещё не прочитали из DataStore (не дёргаем),
+    // false = показать визард один раз. Запускаем отдельной Activity.
+    val onboardingDone by remember(repo) { repo.flow.map { it.onboardingDone } }
+        .collectAsStateWithLifecycle(initialValue = null)
+    var onboardingLaunched by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(onboardingDone) {
+        if (onboardingDone == false && !onboardingLaunched) {
+            onboardingLaunched = true
+            ctx.startActivity(Intent(ctx, OnboardingActivity::class.java))
+        }
+    }
 
     Scaffold { padding ->
         // verticalScroll: при раскрытой "Справке" длина контента
