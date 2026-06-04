@@ -39,6 +39,10 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.ui.draw.rotate
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -955,6 +959,8 @@ private fun CommandConsole(transport: String) {
     }
     fun send() { sendCmd(input); input = "" }
 
+    var cmdsExpanded by rememberSaveable { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -982,18 +988,56 @@ private fun CommandConsole(transport: String) {
                 LogView(log = stripAnsi(log), modifier = Modifier.fillMaxSize(), autoScroll = true)
             }
         }
-        // Авто-чипы команд, распознанных из вывода `help` платы. Тап — отправка.
+        // Авто-чипы команд из вывода `help` платы. Свёрнуты по умолчанию: на платах
+        // с 30+ командами развёрнутый FlowRow распирал консоль на пол-экрана.
         if (helpCmds.isNotEmpty()) {
-            androidx.compose.foundation.layout.FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            val rotation by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (cmdsExpanded) 180f else 0f,
+                label = "chevron"
+            )
+            Surface(
+                onClick = { cmdsExpanded = !cmdsExpanded },
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                helpCmds.forEach { cmd ->
-                    androidx.compose.material3.AssistChip(
-                        onClick = { sendCmd(cmd) },
-                        label = { Text(cmd, maxLines = 1) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        "Команды платы (${helpCmds.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.weight(1f)
                     )
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = if (cmdsExpanded) "Свернуть" else "Развернуть",
+                        modifier = Modifier.rotate(rotation)
+                    )
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = cmdsExpanded,
+                enter = androidx.compose.animation.expandVertically() +
+                    androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.shrinkVertically() +
+                    androidx.compose.animation.fadeOut(),
+            ) {
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    helpCmds.forEach { cmd ->
+                        androidx.compose.material3.AssistChip(
+                            onClick = { sendCmd(cmd) },
+                            label = { Text(cmd, maxLines = 1) }
+                        )
+                    }
                 }
             }
         }
