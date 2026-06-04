@@ -176,7 +176,8 @@ private fun MainScreen() {
                     MaterialTheme.colorScheme.primary,
                     MaterialTheme.colorScheme.tertiary
                 ),
-                onClick = { ctx.startActivity(Intent(ctx, WifiActivity::class.java)) }
+                onClick = { ctx.startActivity(Intent(ctx, WifiActivity::class.java)) },
+                status = connectionsMap["wifi"],
             )
 
             ConnectOption(
@@ -187,7 +188,8 @@ private fun MainScreen() {
                     MaterialTheme.colorScheme.secondary,
                     MaterialTheme.colorScheme.primary
                 ),
-                onClick = { ctx.startActivity(Intent(ctx, BluetoothActivity::class.java)) }
+                onClick = { ctx.startActivity(Intent(ctx, BluetoothActivity::class.java)) },
+                status = connectionsMap["bt"],
             )
 
             ConnectOption(
@@ -198,7 +200,8 @@ private fun MainScreen() {
                     MaterialTheme.colorScheme.primary,
                     MaterialTheme.colorScheme.secondary
                 ),
-                onClick = { ctx.startActivity(Intent(ctx, UsbSerialActivity::class.java)) }
+                onClick = { ctx.startActivity(Intent(ctx, UsbSerialActivity::class.java)) },
+                status = connectionsMap["usb"],
             )
 
             ConnectOption(
@@ -374,7 +377,8 @@ private fun ConnectOption(
     title: String,
     subtitle: String,
     gradient: List<androidx.compose.ui.graphics.Color>,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    status: GlobalConnectionStatus.Snapshot? = null,
 ) {
     // Card(onClick=) даёт ripple, focus и роль Button для TalkBack.
     // Раньше pointerInput { detectTapGestures } лишал accessibility.
@@ -420,9 +424,42 @@ private fun ConnectOption(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            val pill = status?.let { transportStatusPill(it) }
+            if (pill != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(color = pill.second, shape = CircleShape)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = pill.first,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = pill.second,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
         }
     }
 }
+
+/**
+ * Короткая метка состояния транспорта для карточки главного меню: текст + цвет.
+ * Idle не показываем — карточка остаётся чистой, индикатор только когда есть
+ * что сообщить (подключено / процесс / ошибка / обрыв).
+ */
+@Composable
+private fun transportStatusPill(s: GlobalConnectionStatus.Snapshot): Pair<String, androidx.compose.ui.graphics.Color>? =
+    when (s.state) {
+        is ConnectionState.Connected -> stringResource(R.string.status_connected) to SuccessGreen
+        is ConnectionState.Connecting -> stringResource(R.string.status_connecting) to WarningAmber
+        is ConnectionState.Reconnecting -> stringResource(R.string.main_status_reconnecting) to WarningAmber
+        is ConnectionState.Error -> stringResource(R.string.main_status_error) to ErrorRed
+        is ConnectionState.Disconnected -> stringResource(R.string.status_disconnected) to ErrorRed
+        is ConnectionState.Idle -> null
+    }
 
 /**
  * Встроенное руководство пользователя. Официальным языком описывает назначение
