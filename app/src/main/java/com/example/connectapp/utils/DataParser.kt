@@ -101,10 +101,10 @@ object DataParser {
         return out
     }
 
-    // Произвольный канал вида "имя: значение" / "имя=значение" — для плат с
-    // нестандартным набором сенсоров (voltage, rpm, pressure, rssi…).
-    private val labeledChannelRegex =
-        Regex("""(?:^|[\s,;>|])([A-Za-z][A-Za-z0-9_]{0,15})\s*[:=]\s*(-?\d+(?:\.\d+)?)""")
+    // Токен "имя=значение" / "имя:значение" БЕЗ пробелов вокруг разделителя.
+    // Пробелы вокруг намеренно не допускаем — иначе прозаические строки вроде
+    // "Temperature warning: 24.5 C" ложно дают канал "warning".
+    private val kvTokenRegex = Regex("""^([A-Za-z][A-Za-z0-9_]{0,15})[:=](-?\d+(?:\.\d+)?)$""")
     // Метки, уже обрабатываемые как температура/акселерометр — их в динамику не берём.
     private val reservedChannelKeys = setOf(
         "t", "t1", "t2", "temp", "temp1", "temp2", "temperature",
@@ -112,17 +112,29 @@ object DataParser {
     )
 
     /**
-     * Извлекает произвольные именованные каналы из строки (метки `имя:значение`).
-     * Температурные/акселерометрные метки исключаются — они идут в свои каналы.
-     * Чисто-позиционная телеметрия (CSV без меток) сюда не попадает. Пустая
-     * map — значит динамических каналов в строке нет.
+     * Извлекает произвольные именованные каналы (`имя=значение`) ТОЛЬКО из строк,
+     * которые целиком выглядят как данные: каждый токен — это `имя=значение`,
+     * число или чистая пунктуация-разделитель. Если в строке есть прозаическое
+     * слово (лог/статус/help) — это не данные, возвращаем пусто. Так избегаем
+     * ложных каналов из текстового вывода платы. Температурные/accel-метки и
+     * позиционный CSV сюда не попадают.
      */
     fun parseDynamicChannels(line: String): Map<String, Float> {
+        val tokens = line.trim().split(Regex("""[\s,;]+""")).filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return emptyMap()
         val out = LinkedHashMap<String, Float>()
-        for (m in labeledChannelRegex.findAll(line)) {
-            val key = m.groupValues[1]
-            if (key.lowercase() in reservedChannelKeys) continue
-            m.groupValues[2].toFloatOrNull()?.let { out[key] = it }
+        for (tok in tokens) {
+            val m = kvTokenRegex.matchEntire(tok)
+            if (m != null) {
+                val key = m.groupValues[1]
+                if (key.lowercase() !in reservedChannelKeys) {
+                    m.groupValues[2].toFloatOrNull()?.let { out[key] = it }
+                }
+                continue
+            }
+            if (tok.toFloatOrNull() != null) continue          // число — часть данных
+            if (tok.none { it.isLetterOrDigit() }) continue    // пунктуация/промпт (">", "|")
+            return emptyMap()                                   // прозаическое слово → не данные
         }
         return out
     }
