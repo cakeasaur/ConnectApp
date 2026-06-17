@@ -45,6 +45,9 @@ import com.example.connectapp.utils.PerfTrace
 import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
 
@@ -186,10 +189,16 @@ fun NeonChart(
     } else baseRange
 
     // bounds считаются по ВСЕМ данным серий (не по phase-lock окну) — иначе
-    // Y-масштаб скачет на каждом новом отсчёте. БЕЗ remember: ring-buffer
-    // фиксированной длины делал nonEmpty.size константой и bounds залипали
-    // на устаревших значениях. Считаем напрямую — O(N) проход дёшев.
-    val bounds = computeBounds(nonEmpty, config.thresholds)
+    // Y-масштаб скачет на каждом новом отсчёте. target пересчитываем напрямую
+    // каждый кадр (O(N) дёшево), а settle() демпфирует переключение границ
+    // через remember-холдер (см. AxisHold) — без залипания старого bounds.
+    val axisHold = remember { AxisHold() }
+    val raw = rawRanges(nonEmpty, config.thresholds)
+    val settledLeft = niceAxis(raw.left.first, raw.left.second)
+        .settle(axisHold.left).also { axisHold.left = it }
+    // Правая ось привязана к числу делений (settled) левой → общая сетка, обе nice.
+    val settledRight = raw.right?.let { niceAxisFixed(it.first, it.second, settledLeft.count) }
+    val bounds = ChartBounds(settledLeft, settledRight)
 
     // Ширина чарта в пикселях. NaN = ещё не обмерян (до первого onSizeChanged).
     // NaN-guard в transformableState исключает неверный скачок при первом свайпе
@@ -365,17 +374,28 @@ fun NeonStatBox(
 // Bounds computation
 // ============================================================
 
-private data class AxisBounds(val yMin: Float, val yMax: Float) {
+private data class AxisBounds(
+    val yMin: Float,
+    val yMax: Float,
+    val step: Float = 0f,
+    val count: Int = Y_DIVISIONS,
+) {
     val range: Float get() = (yMax - yMin).coerceAtLeast(1e-6f)
 }
 
 private data class ChartBounds(val left: AxisBounds, val right: AxisBounds?)
 
-private fun computeBounds(
-    series: List<NeonSeries>,
-    thresholds: List<NeonThreshold>
-): ChartBounds {
-    fun boundsFor(axis: NeonAxis): AxisBounds? {
+private const val Y_DIVISIONS = 5
+
+/**
+ * Сырые (min,max) по каждой оси — БЕЗ nice-округления. Округление и гистерезис
+ * делаем в @Composable (нужно состояние remember). Threshold-значения включены
+ * в диапазон, чтобы ось их накрыла.
+ */
+private data class RawRanges(val left: Pair<Float, Float>, val right: Pair<Float, Float>?)
+
+private fun rawRanges(series: List<NeonSeries>, thresholds: List<NeonThreshold>): RawRanges {
+    fun rangeFor(axis: NeonAxis): Pair<Float, Float>? {
         val relevant = series.filter { it.axis == axis }
         val thr = thresholds.filter { it.axis == axis }
         if (relevant.isEmpty() && thr.isEmpty()) return null
@@ -390,12 +410,97 @@ private fun computeBounds(
             if (t.value > mx) mx = t.value
         }
         if (!mn.isFinite() || !mx.isFinite()) return null
-        val pad = ((mx - mn) * 0.1f).coerceAtLeast(0.5f)
-        return AxisBounds(mn - pad, mx + pad)
+        return mn to mx
     }
-    val left = boundsFor(NeonAxis.LEFT) ?: AxisBounds(-1f, 1f)
-    val right = boundsFor(NeonAxis.RIGHT)
-    return ChartBounds(left, right)
+    return RawRanges(rangeFor(NeonAxis.LEFT) ?: (-1f to 1f), rangeFor(NeonAxis.RIGHT))
+}
+
+/**
+ * «Красивые» границы оси по Хекберту: step округлён к 1/2/5·10ⁿ, границы —
+ * floor/ceil к шагу. Число делений ПЕРЕМЕННОЕ — это даёт тугую подгонку без
+ * переразмаха (фикс-count раньше растягивал ±477 в диапазон −500…2000).
+ * Подписи вида 23/24/25 вместо сырых 23.47, и границы меняются только при
+ * переходе через nice-бэнд, а не на каждый отсчёт.
+ */
+private fun niceAxis(min: Float, max: Float): AxisBounds {
+    var lo = min
+    var hi = max
+    if (!lo.isFinite() || !hi.isFinite()) return AxisBounds(-1f, 1f, 0.4f, 5)
+    if (hi - lo < 1e-6f) {
+        // Плоский сигнал — синтетический диапазон вокруг значения, иначе step=0.
+        val c = (lo + hi) / 2f
+        val d = if (abs(c) > 1f) abs(c) * 0.05f else 0.5f
+        lo = c - d; hi = c + d
+    }
+    val target = 5
+    val niceRange = niceNum(hi - lo, round = false).coerceAtLeast(1e-9f)
+    val step = niceNum(niceRange / (target - 1), round = true).coerceAtLeast(1e-9f)
+    val niceMin = floor(lo / step) * step
+    val niceMax = ceil(hi / step) * step
+    val count = Math.round((niceMax - niceMin) / step).coerceAtLeast(1)
+    return AxisBounds(niceMin, niceMax, step, count)
+}
+
+/**
+ * Nice-ось с ФИКСИРОВАННЫМ числом делений — для правой оси, чтобы её сетка
+ * совпала с левой (count берём от левой). Шаг растим, пока [count] делений не
+ * накроют диапазон.
+ */
+private fun niceAxisFixed(min: Float, max: Float, count: Int): AxisBounds {
+    var lo = min
+    var hi = max
+    if (!lo.isFinite() || !hi.isFinite()) return AxisBounds(-1f, 1f, 0.4f, count)
+    if (hi - lo < 1e-6f) {
+        val c = (lo + hi) / 2f
+        val d = if (abs(c) > 1f) abs(c) * 0.05f else 0.5f
+        lo = c - d; hi = c + d
+    }
+    var step = niceNum((hi - lo) / count, round = true).coerceAtLeast(1e-9f)
+    var niceMin = floor(lo / step) * step
+    var niceMax = niceMin + count * step
+    var guard = 0
+    while (niceMax < hi && guard++ < 8) {
+        step = niceNum(step * 1.5f, round = true)
+        niceMin = floor(lo / step) * step
+        niceMax = niceMin + count * step
+    }
+    return AxisBounds(niceMin, niceMax, step, count)
+}
+
+/** Округление x к ближайшему «приятному» числу (1/2/5·10ⁿ). */
+private fun niceNum(x: Float, round: Boolean): Float {
+    if (x <= 0f) return 1f
+    val exp = floor(log10(x.toDouble())).toInt()
+    val pow = Math.pow(10.0, exp.toDouble()).toFloat()
+    val f = x / pow
+    val nf = if (round) {
+        when { f < 1.5f -> 1f; f < 3f -> 2f; f < 7f -> 5f; else -> 10f }
+    } else {
+        when { f <= 1f -> 1f; f <= 2f -> 2f; f <= 5f -> 5f; else -> 10f }
+    }
+    return nf * pow
+}
+
+/**
+ * Анти-дёрганье оси: расширяемся сразу (новый пик не должен клиппиться), а
+ * сужаемся только когда данные ушли вглубь ≥2 делений. Иначе ось «прыгает»
+ * между соседними nice-бэндами, когда максимум колеблется у их границы.
+ *
+ * Состояние держим в [AxisHold] (remember на уровне NeonChart): target всё
+ * равно пересчитывается каждый кадр, тут лишь демпфируем переключение — поэтому
+ * залипания, из-за которого раньше убрали remember у bounds, не возникает.
+ */
+private class AxisHold {
+    var left: AxisBounds? = null
+}
+
+private fun AxisBounds.settle(prev: AxisBounds?): AxisBounds {
+    if (prev == null || prev.step <= 0f) return this
+    val grew = yMax > prev.yMax + 1e-4f || yMin < prev.yMin - 1e-4f
+    if (grew) return this
+    val margin = 2f * prev.step
+    val shrank = yMax <= prev.yMax - margin || yMin >= prev.yMin + margin
+    return if (shrank) this else prev
 }
 
 // ============================================================
@@ -447,8 +552,9 @@ private fun DrawScope.drawNeonChart(
     fun xPx(t: Long) = plotL + plotW * (t - firstT).toFloat() / tRange
     fun yPx(value: Float, ab: AxisBounds) = plotB - plotH * (value - ab.yMin) / ab.range
 
-    // 1. Grid: 5 horizontal divisions, 6 vertical.
-    val hDiv = 5
+    // 1. Grid: число горизонтальных делений = count левой оси (правая
+    // выровнена к нему) — линии ложатся ровно на nice-тики обеих осей.
+    val hDiv = bounds.left.count
     val vDiv = 6
     for (i in 0..hDiv) {
         val y = plotT + plotH * i / hDiv
@@ -557,8 +663,20 @@ private fun DrawScope.drawAxisLabelsY(
         // Левая ось: метка ВПРАВО от xPx=PAD_LEFT-4, выровнена по правому
         // краю (текст растёт справа-налево). Правая ось: метка ВПРАВО от
         // xPx=plotR+4, выровнена по левому краю (текст растёт слева-направо).
-        drawText(formatTick(v), xPx, y + 3f, alignCenter = false, alignRight = !right)
+        drawText(formatTickStep(v, ab.step), xPx, y + 3f, alignCenter = false, alignRight = !right)
     }
+}
+
+/**
+ * Формат nice-тика по величине шага: число знаков после запятой = столько,
+ * сколько нужно шагу (step 2 → "24", step 0.5 → "1.5", step 0.05 → "0.05").
+ * Околонулевые значения схлопываем в "0", чтобы не показывать "-0.00".
+ */
+private fun formatTickStep(v: Float, step: Float): String {
+    if (step <= 0f) return formatTick(v)
+    val decimals = if (step >= 1f) 0 else ceil(-log10(step.toDouble())).toInt().coerceIn(0, 6)
+    val vv = if (abs(v) < step * 1e-3f) 0f else v
+    return "%.${decimals}f".format(Locale.ROOT, vv)
 }
 
 private fun formatTick(v: Float): String = when {

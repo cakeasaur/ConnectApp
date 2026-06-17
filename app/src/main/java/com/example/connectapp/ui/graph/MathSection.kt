@@ -115,7 +115,7 @@ fun MathSection(
         "Спектрограмма ax1 (STFT-waterfall, turbo-палитра)",
         style = MaterialTheme.typography.titleMedium
     )
-    SpectrogramCard(series = a1x, sampleRateHz = sampleRateHz)
+    SpectrogramCard(series = a1x, sampleRateHz = sampleRateHz, generation = generation)
 
     Text(
         "Orbit / Lissajous (фазовые портреты)",
@@ -509,8 +509,9 @@ private fun CrossCorrCurve(corr: FloatArray, maxLag: Int, modifier: Modifier) {
         val cy = h / 2f
         // Нулевая линия R = 0
         drawLine(zeroColor, Offset(0f, cy), Offset(w, cy), strokeWidth = 1f)
-        // Вертикаль на lag = 0
-        val zeroLagX = w * maxLag / corr.size
+        // Вертикаль на lag = 0. Делитель (size-1), как у кривой ниже, иначе
+        // линия чуть смещена от центра кривой (индекс maxLag = lag 0).
+        val zeroLagX = w * maxLag / (corr.size - 1).toFloat()
         drawLine(zeroColor, Offset(zeroLagX, 0f), Offset(zeroLagX, h), strokeWidth = 1f)
         // График корреляции
         var prev = Offset(0f, cy - corr[0] * (h / 2f))

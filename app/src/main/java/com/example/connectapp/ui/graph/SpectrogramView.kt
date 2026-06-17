@@ -65,7 +65,8 @@ private const val DB_DYNAMIC_RANGE = 60f
 fun SpectrogramCard(
     series: List<TimedPoint>,
     sampleRateHz: Float,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    generation: Int = 0,
 ) {
     if (series.size < FFT_SIZE) {
         EmptyHint("Нужно ≥$FFT_SIZE отсчётов для STFT")
@@ -78,25 +79,25 @@ fun SpectrogramCard(
     val freqBins = FFT_SIZE / 2
     val bitmap = remember { android.graphics.Bitmap.createBitmap(MAX_COLUMNS, freqBins, android.graphics.Bitmap.Config.ARGB_8888) }
     val pixelBuf = remember { IntArray(MAX_COLUMNS * freqBins) }
+    // AGC-референс нормировки [0]. Сбрасывается на новой сессии (generation),
+    // иначе яркость подстраивается под прошлую плату. См. attack/decay в fill.
+    val agc = remember(generation) { floatArrayOf(1e-6f) }
 
     val lastT = series.last().t
     // Перерасчёт при изменении данных. Заполнение идемпотентно (одни и те
     // же данные → один результат), поэтому side-effect в remember безопасен
-    // даже при отмене composition. Возвращаем bitmap (не Unit) — lint
-    // RememberReturnType запрещает remember, возвращающий Unit.
-    val renderedBitmap = remember(series.size, lastT) {
-        fillSpectrogramBitmap(bitmap, pixelBuf, series, freqBins)
-        bitmap
+    // даже при отмене composition. Возвращаем число заполненных колонок —
+    // оно же даёт честный охват по времени и src-rect для отрисовки.
+    val nCols = remember(series.size, lastT) {
+        fillSpectrogramBitmap(bitmap, pixelBuf, series, freqBins, agc)
     }
 
     val nyquist = sampleRateHz / 2f
     val peakHz = remember(series.size, lastT) { findPeakFreq(series, sampleRateHz) }
 
-    // Полная глубина спектрограммы по времени = nCols * STEP / fs.
-    // Считаем приблизительно от max возможной (MAX_COLUMNS) — реальное
-    // число колонок может быть меньше пока буфер не заполнился, но
-    // подпись остаётся стабильной.
-    val totalSpanSec = MAX_COLUMNS * STEP_SAMPLES / sampleRateHz
+    // Реальная глубина по времени = заполненные колонки × hop. Раньше подпись
+    // считалась от MAX_COLUMNS и завышала охват (буфер до него не дорастает).
+    val dataSpanSec = nCols * STEP_SAMPLES / sampleRateHz
     val hopMs = STEP_SAMPLES * 1000 / sampleRateHz
     NeonCard(modifier = modifier.fillMaxWidth().height(240.dp)) {
         Text(
@@ -111,11 +112,14 @@ fun SpectrogramCard(
                     val w = size.width; val h = size.height
                     drawIntoCanvas { canvas: androidx.compose.ui.graphics.Canvas ->
                         val nativeCanvas: NativeCanvas = canvas.nativeCanvas
-                        val src = android.graphics.Rect(0, 0, renderedBitmap.width, renderedBitmap.height)
+                        // Рисуем только заполненные колонки (они прижаты вправо),
+                        // растягивая на всю ширину — нет неподписанной чёрной
+                        // зоны слева, а ось времени совпадает с подписями.
+                        val src = android.graphics.Rect(MAX_COLUMNS - nCols, 0, MAX_COLUMNS, freqBins)
                         val dst = android.graphics.RectF(0f, 0f, w, h)
                         // FILTER_BITMAP_FLAG default = true (linear interpolation)
                         // даёт сглаженный водопад вместо квадратных пикселей.
-                        nativeCanvas.drawBitmap(renderedBitmap, src, dst, null)
+                        nativeCanvas.drawBitmap(bitmap, src, dst, null)
                     }
                     // Тонкая рамка
                     drawRect(
@@ -142,18 +146,16 @@ fun SpectrogramCard(
                         .padding(4.dp)
                         .align(Alignment.BottomStart)
                 )
-                // X-метки времени: старые слева, "сейчас" справа.
-                // totalSpanSec — полная глубина буфера; интервал между метками
-                // = treть от него для приличной плотности подписей.
+                // X-метки времени: старые слева, "сейчас" справа. Данные
+                // растянуты на всю ширину, центр оси = половина охвата.
                 Text(
-                    "−%.0fs".format(Locale.ROOT, totalSpanSec),
+                    "−%.0fs".format(Locale.ROOT, dataSpanSec / 2f),
                     color = Color.White,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     modifier = Modifier
                         .padding(4.dp)
                         .align(Alignment.BottomCenter)
-                        .padding(start = 0.dp)
                 )
                 Text(
                     "now",
@@ -187,8 +189,9 @@ private fun fillSpectrogramBitmap(
     bitmap: Bitmap,
     pixelBuf: IntArray,
     series: List<TimedPoint>,
-    freqBins: Int
-) {
+    freqBins: Int,
+    agc: FloatArray
+): Int {
     // Сколько окон поместится: округление сверху на маленьких series.
     val maxStartIdx = series.size - FFT_SIZE
     val totalWindows = (maxStartIdx / STEP_SAMPLES) + 1
@@ -202,12 +205,17 @@ private fun fillSpectrogramBitmap(
         Fft.amplitudeSpectrum(arr)
     }
 
-    // Global max for normalization (без DC).
-    var maxAmp = 1e-6f
+    // Max текущего кадра (без DC).
+    var frameMax = 1e-6f
     for (col in columns) {
-        for (i in 1 until col.size) if (col[i] > maxAmp) maxAmp = col[i]
+        for (i in 1 until col.size) if (col[i] > frameMax) frameMax = col[i]
     }
-    val invMax = 1f / maxAmp
+    // AGC-нормировка: подъём мгновенный (новый сильный сигнал не клиппится),
+    // спад медленный (0.05/кадр). Раньше нормировали по per-frame max — и весь
+    // водопад «дышал» цветом при затухании, колонки нельзя было сравнивать.
+    val ref = if (frameMax > agc[0]) frameMax else agc[0] + (frameMax - agc[0]) * 0.05f
+    agc[0] = ref.coerceAtLeast(1e-6f)
+    val invMax = 1f / agc[0]
 
     // Если nCols < MAX_COLUMNS, левая часть буфера зануляется — иначе
     // на previous поколении могли остаться "хвосты".
@@ -232,6 +240,7 @@ private fun fillSpectrogramBitmap(
         }
     }
     bitmap.setPixels(pixelBuf, 0, MAX_COLUMNS, 0, 0, MAX_COLUMNS, freqBins)
+    return nCols
 }
 
 private fun findPeakFreq(series: List<TimedPoint>, sampleRateHz: Float): Float {
