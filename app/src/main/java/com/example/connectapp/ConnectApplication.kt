@@ -26,6 +26,8 @@ class ConnectApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // ПЕРВЫМ — чтобы поймать даже ранние падения инициализации.
+        com.example.connectapp.utils.CrashReporter.install(this)
         val repo = SettingsRepository(applicationContext)
         // Первый запуск — генерируем уникальный topic-prefix, иначе несколько
         // пользователей на public-брокере получили бы одинаковый "connect/#"
