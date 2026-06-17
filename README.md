@@ -16,14 +16,15 @@ Android-приложение для **двусторонней связи в р�
 ConnectApp — приложение на **Kotlin + Jetpack Compose** с архитектурой **MVVM + Repository** и **Coroutines/Flow**, позволяющее подключаться к датчикам, Arduino, ESP32, HC-05 и другим устройствам через **Wi-Fi (TCP)** и **Bluetooth (SPP)**.
 
 **Возможности:**
-- ✅ **Wi-Fi (TCP)** для удалённых устройств — таймаут чтения, keep-alive
+- ✅ **Wi-Fi (TCP)** для удалённых устройств — keep-alive, авто-реконнект, разрыв по EOF
 - ✅ **Bluetooth (SPP)** для локальных устройств с авто-реконнектом
 - ✅ **USB Serial** через USB-OTG (FTDI, CP210x, CH340 и другие)
 - ✅ **Реальное время** — приём через `Flow<String>` и `callbackFlow`
 - ✅ **Сохранение логов** при повороте экрана (`SavedStateHandle`)
-- ✅ **Toast при потере соединения** + автоматический возврат на меню (Wi-Fi)
-- ✅ **Графики** температуры и акселерометра (`MPAndroidChart`)
-- ✅ **Экспорт CSV** из меню графиков (через `FileProvider`)
+- ✅ **Toast при потере соединения**; возврат на меню — на терминальной ошибке (Wi-Fi реконнектит)
+- ✅ **Графики** — кастомный Canvas-чарт (две оси, glow, FFT/спектрограмма/3D); вид графика
+  переключается per-card (линейный/сглаженный/площадной/столбчатый/точки)
+- ✅ **Экспорт CSV/PDF** из меню графиков (через `FileProvider`)
 - ✅ **Лог с временными метками** и фиксированным окном (без OOM)
 
 ---
@@ -102,7 +103,9 @@ while True:
 │  MainActivity                        │
 │  ├─ WifiActivity   + WifiViewModel   │
 │  ├─ BluetoothActivity + BluetoothVM  │
-│  └─ GraphActivity                    │
+│  ├─ UsbSerialActivity + UsbSerialVM  │
+│  ├─ GraphActivity (custom Canvas)    │
+│  └─ Onboarding/History/RRD/MQTT      │
 └────────────────┬─────────────────────┘
                  │
 ┌────────────────▼─────────────────────┐
@@ -115,22 +118,27 @@ while True:
                  │
 ┌────────────────▼─────────────────────┐
 │  Repository (бизнес-логика)          │
-│  · WifiRepository                    │
-│  · BluetoothRepository               │
-│  · авто-реконнект, отмена корутин    │
+│  · WifiRepository (авто-реконнект)   │
+│  · BluetoothRepository (авто-реконн.)│
+│  · UsbSerialRepository               │
+│  · отмена корутин (cancelAndJoin)    │
 └────────────────┬─────────────────────┘
                  │
 ┌────────────────▼─────────────────────┐
 │  Network (I/O)                       │
 │  · WifiClient (TCP Socket)           │
 │  · BluetoothClient (RFCOMM SPP)      │
+│  · UsbSerialClient (USB-OTG)         │
 │  · Dispatchers.IO + Mutex            │
 └──────────────────────────────────────┘
 ```
 
+Поверх транспортов — `MqttBridge` (ретрансляция в Home Assistant/Grafana).
+
 Глобальные шины:
 - `SensorDataBus` — публикует разобранные значения для `GraphActivity`
-- `CommandBus` — `GraphActivity` → `BluetoothViewModel` (отправка команд)
+- `CommandBus` — `GraphActivity` → активная VM (отправка команд)
+- `RrdLog` — авто-детект и парсинг журнала событий платы (`log dump`)
 
 ---
 
@@ -178,9 +186,11 @@ app/src/test/                  — юнит-тесты (DataParser)
 
 | Параметр | Значение |
 |---|---|
-| Connect / read timeout | 30 000 ms |
+| Connect timeout | 10 000 ms |
+| Read timeout (SO_TIMEOUT) | 0 (∞; разрыв по EOF/IOException) |
 | Discovery timeout | 12 000 ms |
 | Reconnect delay | 3 000 ms |
+| Reconnect attempts (без данных) | 4, затем ошибка |
 | Read buffer | 1024 bytes |
 | Лог в памяти | 30 000 chars (FIFO) |
 | Точек на графике | 60 (FIFO) |
