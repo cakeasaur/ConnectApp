@@ -184,11 +184,16 @@ object RrdEventLogParser {
 object RrdLog {
 
     private const val MAX_BUF = 16_000
+    // Окно после запроса `log dump`, в котором ответ платы трактуем как дамп
+    // (в т.ч. пустой «No events in log»). Вне окна эту фразу игнорируем —
+    // иначе help/echo-строка с ней затирала последний дамп в пустой.
+    private const val DUMP_WINDOW_MS = 8_000L
 
     private val lock = Any()
     private val buf = StringBuilder()
     private var capturing = false
     private var persistFile: File? = null
+    @Volatile private var dumpRequestedAt = 0L
 
     private val _dump = MutableStateFlow<RrdDump?>(null)
     val dump: StateFlow<RrdDump?> = _dump.asStateFlow()
@@ -221,10 +226,13 @@ object RrdLog {
         synchronized(lock) {
             val clean = stripAnsi(line)
             val t = clean.trim()
+            val withinDumpWindow = System.currentTimeMillis() - dumpRequestedAt < DUMP_WINDOW_MS
             // Пустой журнал: плата (напр. BOLUTEK/PIC) на `log dump` отвечает
-            // одной строкой «No events in log.» — таблицы и «Total entries» нет,
-            // поэтому обычный захват не срабатывает. Ловим явно.
-            if (t.contains("No events in log", ignoreCase = true)) {
+            // одной строкой «No events in log.» — таблицы и «Total entries» нет.
+            // Ловим ТОЛЬКО как отдельную строку и ТОЛЬКО в контексте дампа (идёт
+            // захват ИЛИ недавно слали запрос). Раньше безусловный contains
+            // затирал последний дамп на любой help/echo-строке с этой фразой.
+            if ((capturing || withinDumpWindow) && isNoEventsLine(t)) {
                 _dump.value = RrdDump(emptyList(), 0, capturedAt = System.currentTimeMillis(), rawText = t)
                 _results.tryEmit(Result("Журнал платы пуст — событий нет", 0))
                 capturing = false
@@ -240,13 +248,16 @@ object RrdLog {
             when {
                 t.contains("Total entries", ignoreCase = true) -> {
                     capturing = false
-                    val raw = buf.toString()
-                    RrdEventLogParser.parse(raw)?.let {
-                        val d = it.copy(capturedAt = System.currentTimeMillis(), rawText = raw)
-                        _dump.value = d
-                        saveToDisk(d)
-                        _results.tryEmit(Result("Журнал получен: ${d.events.size} записей", d.events.size))
-                    }
+                    finalizeDump(buf.toString())
+                    buf.setLength(0)
+                }
+                // Дамп без «Total entries»: часть прошивок завершает вывод
+                // промптом «>». parse() уже трактует «>» как конец таблицы, но
+                // раньше feedLine без «Total entries» не финализировался — дамп
+                // копился в буфере до MAX_BUF и терялся.
+                t.startsWith(">") -> {
+                    capturing = false
+                    finalizeDump(buf.toString())
                     buf.setLength(0)
                 }
                 buf.length > MAX_BUF -> {        // незавершённый дамп — сброс
@@ -254,6 +265,30 @@ object RrdLog {
                     buf.setLength(0)
                 }
             }
+        }
+    }
+
+    /**
+     * Открывает окно [DUMP_WINDOW_MS], в котором ответ платы (включая пустой
+     * «No events in log») трактуется как ответ на дамп. Вызывать прямо перед
+     * отправкой команды `log dump`. Вне окна одиночная фраза «No events in log»
+     * игнорируется — чтобы help/echo не затирал последний дамп.
+     */
+    fun expectDump() {
+        synchronized(lock) { dumpRequestedAt = System.currentTimeMillis() }
+    }
+
+    /** Распознаёт строку платы «No events in log» (с точкой или без) как ОТДЕЛЬНУЮ. */
+    private fun isNoEventsLine(t: String): Boolean =
+        t.trim().trimEnd('.').trim().equals("No events in log", ignoreCase = true)
+
+    /** Парсит сырьё дампа и публикует результат + фидбэк. No-op, если не распарсилось. */
+    private fun finalizeDump(raw: String) {
+        RrdEventLogParser.parse(raw)?.let {
+            val d = it.copy(capturedAt = System.currentTimeMillis(), rawText = raw)
+            _dump.value = d
+            saveToDisk(d)
+            _results.tryEmit(Result("Журнал получен: ${d.events.size} записей", d.events.size))
         }
     }
 
