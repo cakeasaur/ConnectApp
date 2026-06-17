@@ -67,6 +67,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.example.connectapp.data.settings.ChartStyle
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -244,8 +245,13 @@ class GraphActivity : ComponentActivity() {
                     }
                     val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
                     val f = File(cacheDir, "sensor_data_$timestamp.csv")
-                    f.writeText(csv)
-                    f
+                    // Запись под runCatching — диск полон / IO-ошибка иначе пробьёт
+                    // в lifecycleScope.launch и уронит приложение (PDF-путь так же).
+                    runCatching { f.writeText(csv); f }.getOrNull()
+                }
+                if (file == null) {
+                    Toast.makeText(this@GraphActivity, "CSV export failed", Toast.LENGTH_SHORT).show()
+                    return@withLoading
                 }
                 val uri = FileProvider.getUriForFile(this@GraphActivity, "$packageName.fileprovider", file)
                 val intent = Intent(Intent.ACTION_SEND).apply {
@@ -383,6 +389,12 @@ private fun GraphScreen(
     var showAx2 by rememberSaveable { mutableStateOf(true) }
     var showAy2 by rememberSaveable { mutableStateOf(true) }
     var showAz2 by rememberSaveable { mutableStateOf(true) }
+    // Вид графика per-card (дропдаун «Вид графика»). rememberSaveable —
+    // переживает поворот; рестарт-персист — фоллоу-ап. enum Serializable → ок.
+    var tempStyle by rememberSaveable { mutableStateOf(ChartStyle.LINE) }
+    var accel1Style by rememberSaveable { mutableStateOf(ChartStyle.LINE) }
+    var accel2Style by rememberSaveable { mutableStateOf(ChartStyle.LINE) }
+    // dynStyle — per-id, объявлен внутри key(id) ниже (свой стиль на канал).
     // Shared crosshair-state — тап на любом из 3 line charts двигает линию
     // во ВСЕХ. Объект (не StateFlow) держит Long? state без боксинга.
     val crosshair = remember { CrosshairBus() }
@@ -626,6 +638,10 @@ private fun GraphScreen(
                             CommandBus.send("\u001B", transport)
                             CommandLog.append("→ log dump")
                             delay(300)
+                            // Окно распознавания дампа открываем ДО отправки —
+                            // иначе пустой ответ «No events in log» вне окна
+                            // игнорируется.
+                            com.example.connectapp.utils.RrdLog.expectDump()
                             CommandBus.send(cmdDump, transport)
                         }
                     },
@@ -834,7 +850,7 @@ private fun GraphScreen(
             )
 
             if (hasTemp) {
-                Text(stringResource(R.string.label_temperature_unit), style = MaterialTheme.typography.titleLarge)
+                ChartHeader(stringResource(R.string.label_temperature_unit), tempStyle) { tempStyle = it }
                 StatsRow("T1", temp1, "°C")
                 StatsRow("T2", temp2, "°C")
                 ChartCard(height = 220) {
@@ -843,7 +859,7 @@ private fun GraphScreen(
                             NeonSeries(temp1, tempColors[0], "T1"),
                             NeonSeries(temp2, tempColors[1], "T2"),
                         ),
-                        config = tempConfig,
+                        config = tempConfig.copy(style = tempStyle),
                         zoom = zoom,
                         crosshair = crosshair,
                         modifier = Modifier.fillMaxSize()
@@ -852,7 +868,7 @@ private fun GraphScreen(
             }
 
             if (hasA1) {
-                Text("${stringResource(R.string.label_accelerometer)} 1 · $accelUnit", style = MaterialTheme.typography.titleLarge)
+                ChartHeader("${stringResource(R.string.label_accelerometer)} 1 · $accelUnit", accel1Style) { accel1Style = it }
                 AxisFilterRow(
                     showX = showAx1, onShowXChange = { showAx1 = it },
                     showY = showAy1, onShowYChange = { showAy1 = it },
@@ -872,7 +888,7 @@ private fun GraphScreen(
                     }
                     NeonChart(
                         seriesList = a1Series,
-                        config = accelConfig,
+                        config = accelConfig.copy(style = accel1Style),
                         zoom = zoom,
                         crosshair = crosshair,
                         modifier = Modifier.fillMaxSize()
@@ -881,7 +897,7 @@ private fun GraphScreen(
             }
 
             if (hasA2) {
-                Text("${stringResource(R.string.label_accelerometer)} 2 · $accelUnit", style = MaterialTheme.typography.titleLarge)
+                ChartHeader("${stringResource(R.string.label_accelerometer)} 2 · $accelUnit", accel2Style) { accel2Style = it }
                 AxisFilterRow(
                     showX = showAx2, onShowXChange = { showAx2 = it },
                     showY = showAy2, onShowYChange = { showAy2 = it },
@@ -898,7 +914,7 @@ private fun GraphScreen(
                     }
                     NeonChart(
                         seriesList = a2Series,
-                        config = accelConfig,
+                        config = accelConfig.copy(style = accel2Style),
                         zoom = zoom,
                         crosshair = crosshair,
                         modifier = Modifier.fillMaxSize()
@@ -915,10 +931,10 @@ private fun GraphScreen(
                         val live by (SensorDataBus.dynamicFlow(id) ?: emptyFlow).collectAsStateWithLifecycle()
                         val pts = remember(live, windowMs) { applyWindow(live, windowMs) }
                         val unit = dynUnit(id)
-                        Text(
-                            if (unit.isEmpty()) id else "$id · $unit",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        // Свой стиль на КАЖДЫЙ канал: rememberSaveable внутри key(id)
+                        // → уникальный ключ на id (раньше один dynStyle менял все).
+                        var dynStyle by rememberSaveable { mutableStateOf(ChartStyle.LINE) }
+                        ChartHeader(if (unit.isEmpty()) id else "$id · $unit", dynStyle) { dynStyle = it }
                         if (pts.isNotEmpty()) StatsRow(id, pts, unit)
                         ChartCard(height = 180) {
                             NeonChart(
@@ -926,6 +942,7 @@ private fun GraphScreen(
                                 config = NeonChartConfig(
                                     absoluteTime = absoluteTime,
                                     showPeaks = showPeaks,
+                                    style = dynStyle,
                                 ),
                                 zoom = zoom,
                                 crosshair = crosshair,
@@ -1265,11 +1282,86 @@ private fun StatsRow(label: String, points: List<TimedPoint>, unit: String) {
     if (points.isEmpty()) return
     val values = points.map { it.value }
     val mn = values.min(); val mx = values.max(); val avg = values.average()
+    // Точность по величине, а не фикс 2 знака: температура (27.06) — шум в
+    // сотых, хватает 27.1; ускорение в g (0.42) — нужны 2 знака; сырые LSB
+    // (980) — без дробей. Как formatTick в NeonChart.
+    val mag = maxOf(kotlin.math.abs(mn), kotlin.math.abs(mx))
+    val decimals = if (mag >= 100f) 0 else if (mag >= 10f) 1 else 2
+    fun f(v: Double) = "%.${decimals}f".format(Locale.ROOT, v)
     Text(
-        "$label: min %.2f / avg %.2f / max %.2f %s".format(Locale.ROOT, mn, avg, mx, unit),
+        "$label: min ${f(mn.toDouble())} / avg ${f(avg)} / max ${f(mx.toDouble())} $unit",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+/**
+ * Шапка карточки графика: заголовок слева + дропдаун «Вид графика» справа
+ * (per-card выбор типа отрисовки). Заменяет простой Text-заголовок.
+ */
+@Composable
+private fun ChartHeader(title: String, style: ChartStyle, onStyle: (ChartStyle) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        ChartTypeSelector(style, onStyle, modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+@Composable
+private fun ChartTypeSelector(
+    current: ChartStyle,
+    onSelect: (ChartStyle) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(horizontalAlignment = Alignment.End, modifier = modifier) {
+        Text(
+            "Вид графика",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Surface(
+            onClick = { expanded = true },
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            tonalElevation = 1.dp,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
+            ) {
+                Text(current.label, style = MaterialTheme.typography.bodyMedium)
+                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Выбрать вид графика")
+            }
+        }
+        androidx.compose.material3.DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            ChartStyle.entries.forEach { st ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = {
+                        Text(
+                            st.label,
+                            fontWeight = if (st == current)
+                                androidx.compose.ui.text.font.FontWeight.Bold
+                            else androidx.compose.ui.text.font.FontWeight.Normal
+                        )
+                    },
+                    onClick = { onSelect(st); expanded = false }
+                )
+            }
+        }
+    }
 }
 
 @Composable

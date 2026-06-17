@@ -7,9 +7,13 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.graphics.drawscope.clipRect
+import com.example.connectapp.data.settings.ChartStyle
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -100,6 +104,8 @@ data class NeonChartConfig(
     val absoluteTime: Boolean = false,
     /** Помечать точку максимального |значения| в окне колечком и подписью. */
     val showPeaks: Boolean = false,
+    /** Вид отрисовки серий: line/smooth/area/bars/dots. См. [ChartStyle]. */
+    val style: ChartStyle = ChartStyle.LINE,
 )
 
 /**
@@ -228,40 +234,14 @@ fun NeonChart(
     val bandPath = remember { Path() }
     val fillPath = remember { Path() }
 
-    Box(
+    Column(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(NeonTheme.bg)
             .semantics(mergeDescendants = true) { contentDescription = a11y }
-            .onSizeChanged { chartWidthRef[0] = it.width.toFloat() }
-            // transformable: enabled только если zoom передан — иначе модификатор
-            // не конкурирует с вертикальным скроллом родителя.
-            .transformable(transformableState, lockRotationOnZoomPan = true, enabled = zoom != null)
-            // Tap → crosshair, DoubleTap → сброс зума.
-            // Объединяем оба случая в один pointerInput чтобы не конфликтовали.
-            .let { m ->
-                if (crosshair == null && zoom == null) m
-                else m.pointerInput(crosshair, zoom) {
-                    detectTapGestures(
-                        onTap = { offset ->
-                            if (crosshair == null || currentLastT <= currentFirstT) return@detectTapGestures
-                            val padR = if (nonEmpty.any { it.axis == NeonAxis.RIGHT }) padAxisPx else PAD_RIGHT_BASE
-                            val plotL = padAxisPx
-                            val plotR = size.width - padR
-                            if (offset.x < plotL || offset.x > plotR) return@detectTapGestures
-                            val frac = ((offset.x - plotL) / (plotR - plotL)).coerceIn(0f, 1f)
-                            crosshair.tap(currentFirstT + (frac * (currentLastT - currentFirstT)).toLong())
-                        }
-                    )
-                }
-            }
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            PerfTrace.measure("chart.draw") {
-                drawNeonChart(nonEmpty, bounds, config, firstT, lastT, linePath, bandPath, fillPath)
-            }
-        }
-        // Легенда сверху-слева: цвет, метка, текущее значение и пометка оси.
+        // Легенда в шапке карты (НАД плотом). Раньше была оверлеем TopStart
+        // поверх Canvas — налезала на верхнюю Y-метку ("28.0") и пики линий.
         LegendRow(
             nonEmpty.map {
                 LegendItem(
@@ -271,25 +251,60 @@ fun NeonChart(
                     rightAxis = it.axis == NeonAxis.RIGHT,
                 )
             },
-            modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 2.dp)
         )
-        // Индикатор зума снизу-справа: "×2.5". Двойной тап сбрасывает.
-        if (zoom != null && zoom.isZoomed) {
-            Text(
-                "×${"%.1f".format(Locale.ROOT, zoom.scaleX)}",
-                color = NeonTheme.accent,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .background(NeonTheme.bg.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            )
-        }
-        // Crosshair overlay — общий с sync-bus.
-        if (crosshair != null) {
-            CrosshairOverlay(crosshair, firstT, lastT, nonEmpty)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .onSizeChanged { chartWidthRef[0] = it.width.toFloat() }
+                // transformable: enabled только если zoom передан — иначе модификатор
+                // не конкурирует с вертикальным скроллом родителя.
+                .transformable(transformableState, lockRotationOnZoomPan = true, enabled = zoom != null)
+                // Tap → crosshair, DoubleTap → сброс зума.
+                // Объединяем оба случая в один pointerInput чтобы не конфликтовали.
+                .let { m ->
+                    if (crosshair == null && zoom == null) m
+                    else m.pointerInput(crosshair, zoom) {
+                        detectTapGestures(
+                            onTap = { offset ->
+                                if (crosshair == null || currentLastT <= currentFirstT) return@detectTapGestures
+                                val padR = if (nonEmpty.any { it.axis == NeonAxis.RIGHT }) padAxisPx else PAD_RIGHT_BASE
+                                val plotL = padAxisPx
+                                val plotR = size.width - padR
+                                if (offset.x < plotL || offset.x > plotR) return@detectTapGestures
+                                val frac = ((offset.x - plotL) / (plotR - plotL)).coerceIn(0f, 1f)
+                                crosshair.tap(currentFirstT + (frac * (currentLastT - currentFirstT)).toLong())
+                            }
+                        )
+                    }
+                }
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                PerfTrace.measure("chart.draw") {
+                    drawNeonChart(nonEmpty, bounds, config, firstT, lastT, linePath, bandPath, fillPath)
+                }
+            }
+            // Индикатор зума снизу-справа: "×2.5". Двойной тап сбрасывает.
+            if (zoom != null && zoom.isZoomed) {
+                Text(
+                    "×${"%.1f".format(Locale.ROOT, zoom.scaleX)}",
+                    color = NeonTheme.accent,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .background(NeonTheme.bg.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+            // Crosshair overlay — общий с sync-bus.
+            if (crosshair != null) {
+                CrosshairOverlay(crosshair, firstT, lastT, nonEmpty)
+            }
         }
     }
 }
@@ -561,21 +576,23 @@ private fun DrawScope.drawNeonChart(
         val color = if (i == 0 || i == hDiv) NeonTheme.gridMajor else NeonTheme.gridMinor
         drawLine(color, Offset(plotL, y), Offset(plotR, y), strokeWidth = 0.5f)
     }
-    for (i in 0..vDiv) {
-        val x = plotL + plotW * i / vDiv
-        val color = if (i == 0 || i == vDiv) NeonTheme.gridMajor else NeonTheme.gridMinor
-        drawLine(color, Offset(x, plotT), Offset(x, plotB), strokeWidth = 0.5f)
-    }
+    // Вертикальная сетка рисуется ВМЕСТЕ с метками оси X ниже — нужно
+    // выравнивание на nice-тики времени (как у Y-оси), а не 6 равных делений.
 
     // 2. Y-axis labels (left).
     drawAxisLabelsY(bounds.left, plotL - 4f, plotT, plotB, hDiv, right = false)
     bounds.right?.let { drawAxisLabelsY(it, plotR + 4f, plotT, plotB, hDiv, right = true) }
 
-    // 3. X-axis labels.
+    // 3. Вертикальная сетка + метки оси X (зависят от режима времени).
     if (config.absoluteTime) {
-        // Абсолютное время HH:mm:ss. Метки шире относительных секунд, поэтому
-        // рисуем только три (начало/середина/конец) с краевым выравниванием —
-        // иначе 6 timestamp'ов наезжают друг на друга и клипаются у краёв.
+        // Абсолютное время HH:mm:ss. Сетка — 6 равных делений; меток только три
+        // (начало/середина/конец) с краевым выравниванием, иначе timestamp'ы
+        // наезжают друг на друга и клипаются у краёв.
+        for (i in 0..vDiv) {
+            val x = plotL + plotW * i / vDiv
+            val color = if (i == 0 || i == vDiv) NeonTheme.gridMajor else NeonTheme.gridMinor
+            drawLine(color, Offset(x, plotT), Offset(x, plotB), strokeWidth = 0.5f)
+        }
         for (i in intArrayOf(0, vDiv / 2, vDiv)) {
             val t = firstT + tRange * i / vDiv
             val txt = absTimeFmt.format(java.util.Date(t))
@@ -586,15 +603,31 @@ private fun DrawScope.drawNeonChart(
             }
         }
     } else {
-        val seconds = (lastT - firstT) / 1000f
-        val useDecimal = seconds < 10f
-        for (i in 0..vDiv) {
-            val x = plotL + plotW * i / vDiv
-            val t = firstT + tRange * i / vDiv
-            val sec = (t - firstT) / 1000f
+        // Nice-тики по времени: круглый шаг секунд (как niceAxis по Y), а не
+        // деление диапазона на 6 равных кусков — то давало 0/8/17/26/35/44/53s.
+        val totalSec = (tRange / 1000f).coerceAtLeast(1e-3f)
+        val stepSec = niceTimeStepSec(totalSec)
+        val useDecimal = stepSec < 1f
+        var sec = 0f
+        while (sec <= totalSec + stepSec * 0.001f) {
+            val frac = (sec / totalSec).coerceIn(0f, 1f)
+            val x = plotL + plotW * frac
+            drawLine(
+                if (sec == 0f) NeonTheme.gridMajor else NeonTheme.gridMinor,
+                Offset(x, plotT), Offset(x, plotB), strokeWidth = 0.5f
+            )
             val txt = if (useDecimal) "%.1fs".format(Locale.ROOT, sec) else "${sec.toInt()}s"
-            drawText(txt, x, plotB + 14f, alignCenter = true)
+            // Крайние метки выравниваем к краю: "0s" иначе налезает на нижнюю
+            // Y-метку, а метка у правого края — клипается за рамку.
+            when {
+                sec == 0f -> drawText(txt, x, plotB + 14f)
+                frac >= 0.999f -> drawText(txt, x, plotB + 14f, alignRight = true)
+                else -> drawText(txt, x, plotB + 14f, alignCenter = true)
+            }
+            sec += stepSec
         }
+        // Правая рамка (major): последний nice-тик мог не дойти до plotR.
+        drawLine(NeonTheme.gridMajor, Offset(plotR, plotT), Offset(plotR, plotB), strokeWidth = 0.5f)
     }
 
     // 4. Per-series drawing (envelope → sigma → line → current point).
@@ -604,6 +637,11 @@ private fun DrawScope.drawNeonChart(
     // linePath/bandPath переиспользуются между сериями: каждая drawSeriesLine
     // / drawEnvelope делает .reset() и заполняет заново. Это убирает
     // Path() native-alloc на каждый кадр (раньше 90+ alloc/сек).
+    //
+    // clipRect к плоту: линия/заливка/столбики/точки не лезут в гаттер
+    // Y-меток (AREA-заливка при зуме тянулась за левый край, крайние столбики
+    // наезжали на ось). Оси/метки/пороги рисуются ВНЕ этого clip.
+    clipRect(left = plotL, top = plotT, right = plotR, bottom = plotB) {
     for (s in series) {
         val ab = when (s.axis) {
             NeonAxis.LEFT -> bounds.left
@@ -611,23 +649,35 @@ private fun DrawScope.drawNeonChart(
         }
         val thr = config.thresholds.firstOrNull { it.axis == s.axis }
         val alertY = thr?.let { yPx(it.value, ab) }
-        // Лёгкая градиентная заливка под линией — рисуем ПЕРВОЙ (фоном), чтобы
-        // линия/glow и точки легли поверх. Даёт «глубину» без новой логики.
-        if (s.data.size >= 2) {
+        // Заливка под линией — только «Площадной» (AREA).
+        if (config.style == ChartStyle.AREA && s.data.size >= 2) {
             buildSmoothPath(fillPath, s.data, firstT, lastT, ::xPx, ::yPx, ab, closeBottomY = plotB)
             drawPath(
                 fillPath,
                 brush = Brush.verticalGradient(
-                    colors = listOf(s.color.copy(alpha = 0.18f), Color.Transparent),
+                    colors = listOf(s.color.copy(alpha = 0.32f), Color.Transparent),
                     startY = plotT, endY = plotB,
                 ),
             )
         }
         if (config.showEnvelope) drawEnvelope(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints, bandPath)
         if (config.showSigma) drawSigma(s, ab, firstT, lastT, ::xPx, ::yPx, plotT, plotB, config.envelopeWindowPoints)
-        drawSeriesLine(s, ab, firstT, lastT, ::xPx, ::yPx, alertY, linePath)
-        drawCurrentPoint(s, ab, ::xPx, ::yPx, alertY)
+        when (config.style) {
+            ChartStyle.DOTS -> drawSeriesDots(s, ab, firstT, lastT, ::xPx, ::yPx)
+            ChartStyle.BARS -> drawSeriesBars(s, ab, firstT, lastT, ::xPx, ::yPx)
+            else -> {
+                // LINE — ломаная по точкам + glow (видно дрожь); SMOOTH/AREA —
+                // сглаженная bezier без glow (чище).
+                drawSeriesLine(
+                    s, ab, firstT, lastT, ::xPx, ::yPx, alertY, linePath,
+                    glow = config.style == ChartStyle.LINE,
+                    smooth = config.style != ChartStyle.LINE,
+                )
+                drawCurrentPoint(s, ab, ::xPx, ::yPx, alertY)
+            }
+        }
         if (config.showPeaks) drawPeak(s, ab, firstT, lastT, ::xPx, ::yPx, plotT)
+    }
     }
 
     // 5. Threshold lines.
@@ -684,6 +734,22 @@ private fun formatTick(v: Float): String = when {
     abs(v) >= 100f -> "%.0f".format(Locale.ROOT, v)
     abs(v) >= 10f -> "%.1f".format(Locale.ROOT, v)
     else -> "%.2f".format(Locale.ROOT, v)
+}
+
+/**
+ * Круглый шаг для оси времени (в секундах) — чтобы метки были 0/10/20/30…,
+ * а не 0/8/17/26 (деление диапазона на 6 равных кусков). Аналог [niceNum] по
+ * Y, но по человеко-понятной лестнице секунд/минут.
+ */
+private fun niceTimeStepSec(totalSec: Float, targetTicks: Int = 6): Float {
+    if (totalSec <= 0f || !totalSec.isFinite()) return 1f
+    val raw = totalSec / targetTicks
+    val ladder = floatArrayOf(
+        0.1f, 0.2f, 0.5f, 1f, 2f, 5f, 10f, 15f, 20f, 30f,
+        60f, 120f, 300f, 600f, 900f, 1800f, 3600f
+    )
+    for (s in ladder) if (s >= raw) return s
+    return ladder.last()
 }
 
 /**
@@ -769,16 +835,20 @@ private fun DrawScope.drawSeriesLine(
     yPx: (Float, AxisBounds) -> Float,
     alertY: Float? = null,   // y-координата порога в пикселях; null = подсветки нет
     path: Path,              // переиспользуемый между сериями/кадрами
+    glow: Boolean = true,    // false → тонкое ядро без blur-halo (SMOOTH/AREA)
+    smooth: Boolean = true,  // false → ломаная (прямые сегменты) для стиля LINE
 ) {
     if (s.data.size < 2) return
     PerfTrace.measure("path.build") {
-        buildSmoothPath(path, s.data, firstT, lastT, xPx, yPx, ab)
+        buildSmoothPath(path, s.data, firstT, lastT, xPx, yPx, ab, smooth = smooth)
     }
 
     drawIntoCanvas { canvas ->
         if (alertY == null) {
-            haloPaint.color = s.color.glow(0.4f)
-            canvas.drawPath(path, haloPaint)
+            if (glow) {
+                haloPaint.color = s.color.glow(0.4f)
+                canvas.drawPath(path, haloPaint)
+            }
             corePaint.color = s.color
             canvas.drawPath(path, corePaint)
         } else {
@@ -790,20 +860,81 @@ private fun DrawScope.drawSeriesLine(
             // Нижняя часть
             nc.save()
             nc.clipRect(0f, alertY, size.width, size.height)
-            haloPaint.color = s.color.glow(0.4f)
-            canvas.drawPath(path, haloPaint)
+            if (glow) {
+                haloPaint.color = s.color.glow(0.4f)
+                canvas.drawPath(path, haloPaint)
+            }
             corePaint.color = s.color
             canvas.drawPath(path, corePaint)
             nc.restore()
             // Верхняя часть (превышение порога)
             nc.save()
             nc.clipRect(0f, 0f, size.width, alertY)
-            haloPaint.color = NeonTheme.alert.glow(0.5f)
-            canvas.drawPath(path, haloPaint)
+            if (glow) {
+                haloPaint.color = NeonTheme.alert.glow(0.5f)
+                canvas.drawPath(path, haloPaint)
+            }
             corePaint.color = NeonTheme.alert
             canvas.drawPath(path, corePaint)
             nc.restore()
         }
+    }
+}
+
+/**
+ * DOTS-стиль: точки-сэмплы без соединительной линии. Видно реальную частоту
+ * дискретизации и пропуски. Рисуем только точки в окне [firstT]..[lastT].
+ */
+private fun DrawScope.drawSeriesDots(
+    s: NeonSeries,
+    ab: AxisBounds,
+    firstT: Long, lastT: Long,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+) {
+    val r = 2.2.dp.toPx()
+    for (p in s.data) {
+        if (p.t < firstT || p.t > lastT) continue
+        drawCircle(s.color, radius = r, center = Offset(xPx(p.t), yPx(p.value, ab)))
+    }
+}
+
+/**
+ * BARS-стиль: вертикальные столбики. База — линия нуля, если 0 внутри
+ * диапазона оси (знаковый сигнал — аксел), иначе низ оси (только-плюс — темп).
+ * Ширина столбика — доля шага между точками, clamp чтобы не слипались/не пропадали.
+ */
+private fun DrawScope.drawSeriesBars(
+    s: NeonSeries,
+    ab: AxisBounds,
+    firstT: Long, lastT: Long,
+    xPx: (Long) -> Float,
+    yPx: (Float, AxisBounds) -> Float,
+) {
+    val pts = s.data.filter { it.t in firstT..lastT }
+    if (pts.isEmpty()) return
+    val baseVal = if (0f in ab.yMin..ab.yMax) 0f else ab.yMin
+    val baseY = yPx(baseVal, ab)
+    val barW = if (pts.size >= 2)
+        ((xPx(pts.last().t) - xPx(pts.first().t)) / (pts.size - 1) * 0.65f).coerceIn(1.5f, 14f)
+    else 6f
+    // Мин-высота: серия на базовой линии (плоский сигнал на 0, либо точка
+    // на нуле) иначе даёт height=0 → столбик невидим, и серия «пропадает»
+    // (ax/ay≈0 на дуальной оси с шумной az). Стаб minH делает её видимой.
+    val minH = 2.dp.toPx()
+    // alpha < 1 — на дуальной оси высокие столбики az перекрывают ax/ay;
+    // полупрозрачность даёт увидеть наложения.
+    for (p in pts) {
+        val x = xPx(p.t)
+        val vy = yPx(p.value, ab)
+        val h = max(abs(baseY - vy), minH)
+        // value выше базовой (vy<=baseY) → растим вверх от базы; ниже → вниз.
+        val top = if (vy <= baseY) baseY - h else baseY
+        drawRect(
+            color = s.color.copy(alpha = 0.7f),
+            topLeft = Offset(x - barW / 2f, top),
+            size = androidx.compose.ui.geometry.Size(barW, h),
+        )
     }
 }
 
@@ -824,6 +955,7 @@ private fun buildSmoothPath(
     yPx: (Float, AxisBounds) -> Float,
     ab: AxisBounds,
     closeBottomY: Float? = null,   // если задано — замыкаем контур вниз для заливки
+    smooth: Boolean = true,        // false → прямые сегменты (ломаная), для стиля LINE
 ) {
     // Path передан извне (remember в @Composable) и переиспользуется между
     // кадрами/сериями. reset() очищает внутренние буферы без realloc.
@@ -842,14 +974,22 @@ private fun buildSmoothPath(
     val first = data[startIdx]
     val firstX = xPx(first.t)
     path.moveTo(firstX, yPx(first.value, ab))
-    // Quadratic через середины: control=точка i, end=midpoint(i, i+1).
-    // Это даёт плавную кривую через все точки данных (Catmull-Rom-like).
-    for (i in startIdx + 1 until endIdx) {
-        val p = data[i]
-        val pn = data[i + 1]
-        val mx = (xPx(p.t) + xPx(pn.t)) / 2f
-        val my = (yPx(p.value, ab) + yPx(pn.value, ab)) / 2f
-        path.quadraticBezierTo(xPx(p.t), yPx(p.value, ab), mx, my)
+    if (smooth) {
+        // Quadratic через середины: control=точка i, end=midpoint(i, i+1).
+        // Плавная кривая через все точки данных (Catmull-Rom-like).
+        for (i in startIdx + 1 until endIdx) {
+            val p = data[i]
+            val pn = data[i + 1]
+            val mx = (xPx(p.t) + xPx(pn.t)) / 2f
+            val my = (yPx(p.value, ab) + yPx(pn.value, ab)) / 2f
+            path.quadraticBezierTo(xPx(p.t), yPx(p.value, ab), mx, my)
+        }
+    } else {
+        // Ломаная: прямые сегменты по точкам — видно реальную дрожь сигнала.
+        for (i in startIdx + 1 until endIdx) {
+            val p = data[i]
+            path.lineTo(xPx(p.t), yPx(p.value, ab))
+        }
     }
     // Финальный сегмент — прямая к последней точке.
     val last = data[endIdx]
