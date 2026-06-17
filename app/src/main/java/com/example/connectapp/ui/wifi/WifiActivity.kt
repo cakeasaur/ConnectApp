@@ -101,20 +101,15 @@ private fun WifiScreen(viewModel: WifiViewModel, onBack: () -> Unit) {
     var port by remember { mutableStateOf(viewModel.port) }
     var payload by remember { mutableStateOf("") }
 
-    // Toast при ошибках/потерях соединения + автоматический возврат на меню (как обещает README).
+    // Терминальная ошибка (первый коннект провалился или авто-реконнект сдался) —
+    // Toast и возврат на меню. Транзиентные обрывы теперь дают Reconnecting и
+    // НЕ уводят с экрана (Wi-Fi больше не эмитит Disconnected — ветку убрали).
     LaunchedEffect(state) {
-        when (val s = state) {
-            is ConnectionState.Error -> {
-                Toast.makeText(ctx, ctx.getString(R.string.toast_error, s.message), Toast.LENGTH_LONG).show()
-                delay(1500)
-                onBack()
-            }
-            is ConnectionState.Disconnected -> {
-                Toast.makeText(ctx, ctx.getString(R.string.toast_connection_lost), Toast.LENGTH_SHORT).show()
-                delay(1500)
-                onBack()
-            }
-            else -> Unit
+        val s = state
+        if (s is ConnectionState.Error) {
+            Toast.makeText(ctx, ctx.getString(R.string.toast_error, s.message), Toast.LENGTH_LONG).show()
+            delay(1500)
+            onBack()
         }
     }
 
