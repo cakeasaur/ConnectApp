@@ -120,11 +120,12 @@ class ConnectionForegroundService : Service() {
          * Повторный вызов с тем же owner'ом не увеличит внутренний счётчик.
          */
         fun start(context: Context, owner: String, title: String) {
-            val firstOwner = synchronized(ownersLock) {
-                val wasEmpty = owners.isEmpty()
-                owners.add(owner)
-                wasEmpty
-            }
+            // added == true только если этого владельца ещё не было в наборе.
+            // Раньше тут считали wasEmpty (был ли набор пуст) и откатывали по
+            // нему: у НЕ-первого владельца упавший старт не откатывался, ключ
+            // оставался в owners, и сервис не умирал после снятия остальных —
+            // вечный notification.
+            val added = synchronized(ownersLock) { owners.add(owner) }
             val intent = Intent(context, ConnectionForegroundService::class.java)
                 .putExtra(EXTRA_TITLE, title)
             runCatching {
@@ -133,8 +134,8 @@ class ConnectionForegroundService : Service() {
                 // только из активной VM (живой пока Activity видна), так что ок.
                 ContextCompat.startForegroundService(context, intent)
             }.onFailure {
-                // Откатим, если этот вызов добавил нового владельца.
-                if (firstOwner) synchronized(ownersLock) { owners.remove(owner) }
+                // Откатим только если этот вызов реально добавил владельца.
+                if (added) synchronized(ownersLock) { owners.remove(owner) }
             }
         }
 
