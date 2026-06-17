@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -66,8 +67,10 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.connectapp.R
+import com.example.connectapp.utils.CrashReporter
 import com.example.connectapp.data.models.ConnectionState
 import com.example.connectapp.data.models.GlobalConnectionStatus
 import com.example.connectapp.data.settings.SettingsRepository
@@ -149,6 +152,69 @@ private fun MainScreen() {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // Баннер прошлого краша — отчёт пишется локально (CrashReporter),
+            // отсюда отправляется разработчику (share файла через FileProvider).
+            val crashCtx = LocalContext.current
+            var hasCrash by remember { mutableStateOf(CrashReporter.hasReport(crashCtx)) }
+            if (hasCrash) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Прошлый сеанс завершился аварийно",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            "Журнал ошибки сохранён локально. Отправь его разработчику.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                            Text(
+                                "Отправить отчёт",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable {
+                                    val uri = FileProvider.getUriForFile(
+                                        crashCtx,
+                                        "${crashCtx.packageName}.fileprovider",
+                                        CrashReporter.file(crashCtx)
+                                    )
+                                    val send = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_SUBJECT, "ConnectApp crash report")
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    crashCtx.startActivity(
+                                        Intent.createChooser(send, "Отправить отчёт")
+                                    )
+                                }
+                            )
+                            Text(
+                                "Скрыть",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clickable {
+                                    CrashReporter.clear(crashCtx)
+                                    hasCrash = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
 
             // Persistent connection status — показывается только когда есть
             // активная сессия. AnimatedVisibility красиво ужимается/раскрывается.

@@ -4,4 +4,6 @@
     <cache-path name="shared_files" path="." />
     <!-- Записанные raw-сессии (SessionRecorder). -->
     <external-cache-path name="sessions" path="sessions/" />
+    <!-- crash_log.txt для «отправить отчёт» (CrashReporter, filesDir). -->
+    <files-path name="crash" path="." />
 </paths>
