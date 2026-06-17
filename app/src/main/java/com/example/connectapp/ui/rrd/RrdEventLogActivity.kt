@@ -226,18 +226,26 @@ private fun RrdEventLogScreen(onBack: () -> Unit, onExportCsv: () -> Unit, onExp
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (events.isEmpty()) {
+                // Различаем «дампа ещё не получали» (dump == null) и «плата
+                // ответила, но журнал пуст» (dump != null, событий 0) — иначе
+                // оба показывали «Нет дампа», и пустой журнал платы выглядел
+                // как «приложение не получило ответ».
+                val noDumpYet = dump == null
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
-                        "Нет дампа",
+                        if (noDumpYet) "Дампа ещё нет" else "Журнал платы пуст",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "Нажми «dump» на экране Графиков — журнал событий платы появится здесь.",
+                        if (noDumpYet)
+                            "Нажми «dump» на экране Графиков — журнал событий платы появится здесь."
+                        else
+                            "Плата ответила «No events in log» — в журнале RRD пока нет событий.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp)
