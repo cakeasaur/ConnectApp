@@ -111,7 +111,7 @@ class UsbSerialViewModel(application: Application) : AndroidViewModel(applicatio
     fun connect(device: UsbDevice) {
         SensorDataBus.clear()
         processor.reset()
-        repo.connect(device, viewModelScope)
+        viewModelScope.launch { repo.connect(device, viewModelScope) }
     }
 
     fun disconnect() {

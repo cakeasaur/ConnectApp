@@ -101,11 +101,30 @@ class UsbSerialRepository(
      * disconnect между этими двумя launch'ами видел readerJob=null и не
      * отменял ещё не запущенный read-цикл, который потом стартовал и
      * продолжал читать после disconnect.
+     *
+     * suspend + cancelAndJoin — как [WifiRepository.connect] /
+     * [BluetoothRepository.connect]. Раньше тут был голый readerJob?.cancel()
+     * (неблокирующий): старый job, висящий в непрерываемом input.read(),
+     * добегал до finally{client.close()} уже ПОСЛЕ того, как новый job открыл
+     * порт, — и закрывал чужое соединение. Теперь ждём завершения старого
+     * reader'а ДО открытия нового.
      */
-    fun connect(device: UsbDevice, scope: CoroutineScope, baudRate: Int = 115200) {
-        readerJob?.cancel()
+    suspend fun connect(device: UsbDevice, scope: CoroutineScope, baudRate: Int = 115200) {
+        // Идемпотентность: уже соединены или открываемся — выходим. Без гарда
+        // двойной тап по второму устройству в окне Connecting→Connected
+        // запускал второй connect поверх живого.
+        when (_state.value) {
+            is ConnectionState.Connected, is ConnectionState.Connecting -> return
+            else -> { /* fall through */ }
+        }
+        // Connecting ДО первой точки приостановки — два быстрых вызова не
+        // пройдут гард оба, пока состояние ещё Idle/Error.
+        _state.value = ConnectionState.Connecting
+        // Ждём прошлый reader и гарантируем закрытие старого порта.
+        readerJob?.cancelAndJoin()
+        readerJob = null
+        runCatching { client.close() }
         readerJob = scope.launch {
-            _state.value = ConnectionState.Connecting
             val granted = runCatching { requestPermission(device) }.getOrDefault(false)
             if (!granted) {
                 _state.value = ConnectionState.Error("Нет разрешения на USB-устройство")
