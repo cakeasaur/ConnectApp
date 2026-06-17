@@ -3,7 +3,7 @@
 ![Android](https://img.shields.io/badge/Android-8.0%2B-green?logo=android)
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9.24-blue?logo=kotlin)
 ![API](https://img.shields.io/badge/API-26%2B-green)
-![License](https://img.shields.io/badge/License-MIT-orange)
+![License](https://img.shields.io/badge/License-Proprietary-red)
 ![MVVM](https://img.shields.io/badge/Architecture-MVVM%20%2B%20Repository-purple)
 ![UI](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose)
 
@@ -227,9 +227,9 @@ app/src/test/                  — юнит-тесты (DataParser)
 
 ---
 
-### 🤝 Вклад
+### 🔨 Сборка
 
-Pull request'ы приветствуются. Перед PR:
+Перед сборкой релиза прогнать:
 
 ```bash
 ./gradlew testDebugUnitTest lintDebug assembleDebug
@@ -239,8 +239,6 @@ Pull request'ы приветствуются. Перед PR:
 
 ### 📄 Лицензия
 
-MIT License — открытый проект.
-
----
-
-⭐ Если приложение помогло — поставьте звезду на GitHub!
+**Proprietary. Все права защищены.** Коммерческий проект; код не предназначен
+для публичного использования, копирования или распространения без письменного
+разрешения правообладателя. Дистрибуция — приватная (передача APK).
