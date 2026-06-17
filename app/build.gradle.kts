@@ -29,6 +29,10 @@ android {
         debug {
             // Не минифицируем debug — иначе долго и трудно отлаживать.
             isMinifyEnabled = false
+            // Отдельный applicationId — debug ставится РЯДОМ с release-сборкой
+            // (та подписана другим ключом → иначе INSTALL_FAILED_UPDATE_INCOMPATIBLE).
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
     }
 
